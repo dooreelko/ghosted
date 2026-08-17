@@ -13,4 +13,15 @@ NEVER manupulate the moth files directly, ALWAYS use `moth` cli for any changes.
 
 See `moth --agent-help`
 
+## Sensitive data
+
+Moth specs (and other tracked files, including phase docs) are public information. Never put
+exact AWS resource IDs (instance/VPC/subnet/SG/route-table/gateway/distribution/hosted-zone IDs),
+credential or parameter names, account IDs, or similar identifiers directly into tracked files.
+
+Instead, write them into `.local-secrets.md` (gitignored, lives at the repo root) under a heading
+for the relevant task/feature, and reference resources in tracked files by role/tag (e.g. "the
+appserver instance, tagged app:ghost-classic") with a pointer to `.local-secrets.md` for the exact
+value.
+
 
