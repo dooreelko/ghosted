@@ -1,17 +1,20 @@
 let
   pkgs = import <nixpkgs> { };
 
-moth = (builtins.getFlake "github:tailoredshapes/moth")
+  moth = (builtins.getFlake "github:tailoredshapes/moth")
         .packages.${pkgs.system}.default;
 
-in
+in pkgs.mkShellNoCC {
+ 
+    buildInputs = [
+      
+      pkgs.awscli2
+	  pkgs.ssm-session-manager-plugin
+	  pkgs.chromium
+	  pkgs.nodejs_25
 
-pkgs.mkShellNoCC {
+	  moth
+   ];
+ }
 
-packages = with pkgs; [
-	moth
-    awscli2
-	ssm-session-manager-plugin
- ];
-   
-}
+

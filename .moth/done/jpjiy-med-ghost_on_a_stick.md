@@ -44,7 +44,9 @@ Note: exact AWS resource IDs (instance, VPC, subnet, security group, route table
 
 **Sensitive-data handling (explicit user instruction):** this spec is public information. Exact AWS resource IDs and any credential/parameter names go in .local-secrets.md (gitignored) instead of here; this file references them by role/tag and points at .local-secrets.md for the concrete values. Same convention applies to phase1.md when it's written.
 
-**Deliverables confirmed:** phase1.md covering the architecture described above (network/VPC endpoints including the new ec2messages one, CloudFront origin/behavior config, DNS as documented above, IAM scoping) plus an itemized cost estimate (CloudFront requests/data transfer, CloudFront VPC-origin data processing, SSM interface endpoints hourly cost, t3.micro hourly, EBS, Route53 -- explicitly no NAT Gateway line item since that was rejected in favor of the existing IPv6 egress-only path). phase1.md describes resources by role/tag, not exact IDs, per the sensitive-data handling decision above.
+**Deliverables confirmed:** phase1.md covering the architecture described above (network/VPC endpoints including the new ec2messages one, CloudFront origin/behavior config, DNS as documented above, IAM scoping) plus an itemized cost estimate (CloudFront requests/data transfer, CloudFront VPC-origin data processing, SSM interface endpoints hourly cost, t3.micro hourly, EBS, Route53 -- explicitly no NAT Gateway line item since that was rejected in favor of the (at-the-time) IPv6 egress-only path). phase1.md describes resources by role/tag, not exact IDs, per the sensitive-data handling decision above.
+
+*(Note, 2026-08-23: the "no NAT Gateway ... IPv6 egress-only path" reasoning above was itself superseded a day later -- see "Superseding decision" section below. NAT Gateway stayed rejected, but the alternative that replaced it was Elastic IP + existing IGW, not the IPv6 egress-only path. Left in place for history; not corrected inline to avoid rewriting session-dated decisions after the fact.)*
 
 ### Implementation approach (abstract, not code)
 
@@ -83,3 +85,58 @@ Note: exact AWS resource IDs (instance, VPC, subnet, security group, route table
 **Added:** an Elastic IP associated with the instance; SG egress rules for tcp/587 (SMTP submission) and tcp/80 over IPv4 (the existing tcp/443 and tcp/80 IPv6-only egress rules from the earlier session already covered HTTPS; 587 had no egress rule at all before this).
 
 **Verified:** SMTP AUTH against `smtp.protonmail.ch:587` succeeds from the instance using the real Parameter Store credential (connection + STARTTLS + login, no message actually sent since no target recipient was specified). The blog continued to resolve correctly through CloudFront throughout this change, since CloudFront reaches the instance via its private IP (VPC origin), unaffected by the public IP change.
+
+
+## Post-install cost optimization: SSM VPC interface endpoints removed (2026-08-18)
+
+**Explicit user instruction, once the instance was fully installed, configured, and verified working end-to-end:** delete the three SSM VPC interface endpoints (`ssm`, `ssmmessages`, `ec2messages`) added earlier in this project. Rationale surfaced during a cost-savings discussion: the endpoints' original justification ("the instance has no other route to the internet") was made moot once the Elastic IP + IGW route was added for SMTP (see the superseding decision above) -- SSM control-plane traffic can now travel the same public egress path, at no additional IP cost, instead of paying for a private-backbone-only path that duplicates a route the instance already has. This is a real security-posture trade (SSM traffic now crosses the public internet, still TLS-encrypted, instead of staying on AWS's private backbone) rather than a free optimization; inbound exposure is unchanged either way since it was always governed by the security group, not by the egress path.
+
+No SG changes were needed: the instance's security group already had egress tcp/443 open to 0.0.0.0/0 (added earlier for general HTTPS use). Deletion was verified safe before considering it done: `aws ssm send-command` (Run Command) against the instance succeeded after all three endpoints reached the `deleted` state, confirming the SSM agent can still reach AWS's public SSM endpoints over the instance's existing public IPv4 path.
+
+**Explicit instruction: keep this as a documented, reversible decision, not a permanent architecture change.** The endpoints can be recreated on demand (same subnet, same shared "default" security group -- IDs in .local-secrets.md) if private-backbone-only SSM isolation is wanted again, e.g. before a future maintenance session. `phase1.md`'s cost table keeps a line item for these endpoints rather than removing it, now assuming ~24 hrs/month of on-demand use (recreated for occasional maintenance) instead of continuous (730 hrs/month) operation -- an explicit user instruction, reducing that line from ~$21.90/mo to ~$0.72/mo and the documented total from ~$37-41/mo to ~$16-20/mo.
+
+
+## Correction: SSM VPC endpoints are permanently unneeded, not "recreate for maintenance windows" (2026-08-18)
+
+The framing in the section immediately above ("recreated on demand... e.g. before a future maintenance session", cost line kept at ~24 hrs/month) was wrong and has been corrected. User caught this: the Elastic IP + IGW route (exact IGW ID in `.local-secrets.md`, confirmed attached and active) is a **permanent, standing part of this architecture**, required for as long as Proton SMTP is used -- not a one-off setup-time convenience. That means SSM will always have a public path available; there is no future point where connectivity would require the endpoints back. The only real reason to ever recreate them is a deliberate future decision to reintroduce private-backbone-only SSM isolation as a security preference -- not a routine or periodic operational need.
+
+`phase1.md` has been corrected accordingly: all mentions of the SSM VPC interface endpoints removed from the architecture diagram, network-access section, and cost table (dropped to $0 with a footnote on what reintroducing them would cost, instead of assuming ~24 hrs/month of recreation). The "Design deviations" entry documenting their removal was reworded to state plainly that they will not be recreated as long as the instance keeps this Elastic IP. `.local-secrets.md`'s note on the deleted endpoint IDs was corrected the same way.
+
+
+## Summary: options considered and rejected, with reasons (compiled 2026-08-23)
+
+Consolidated from the detailed decision sections above, for quick reference.
+
+**Mail:**
+- Proton Mail Bridge -- rejected: requires a continuously-running local proxy process on the instance.
+- Amazon SES (as alternative to Proton) -- rejected: SES SMTP/API endpoints are also IPv4-only, wouldn't have solved the IPv6 gap that prompted considering it.
+
+**Network egress:**
+- IPv6-only egress via egress-only internet gateway (original design) -- built, then removed: Proton's SMTP host has no AAAA record, IPv4-only, so this path couldn't carry mail traffic at all.
+- NAT Gateway -- rejected: hourly + per-GB cost, unnecessary once EIP + existing IGW route covered the need.
+- Self-managed NAT instance -- rejected: extra box to patch and monitor, for no benefit over an EIP.
+
+**CloudFront origin exposure:**
+- Elastic IP + SG restricted to CloudFront's prefix list -- rejected: still nominally a public-facing instance.
+- Internal ALB in front of the instance -- rejected: unnecessary extra moving part/cost for a single backend instance.
+
+**CloudFront -> origin protocol header fix (X-Forwarded-Proto):**
+- CloudFront Function setting the header -- rejected: CloudFront refuses to let a Function set this exact header name; attempt caused a brief 502 outage, reverted immediately.
+- CloudFront custom origin header -- rejected: confirmed via packet capture not forwarded to a VPC origin (undocumented gap vs. regular custom origins).
+- Lambda@Edge origin-request function -- built and confirmed working, but not deployed: nginx reverse proxy chosen instead on user preference once suggested; Lambda@Edge function and its IAM role deleted afterward to avoid unused resources.
+
+**Caching on /blog*:**
+- CachingDisabled everywhere under /blog* -- rejected: simpler, but gives the t3.micro no protection against traffic spikes. Short-TTL + a CachingDisabled carve-out for admin/member/API/webhook paths used instead.
+
+**Admin access:**
+- SSM port-forward tunnel as the only way to reach /blog/ghost -- rejected: unnecessary friction for day-to-day blogging. Public CloudFront path (protected by Ghost's own login) used instead.
+
+**Database:**
+- MySQL 8 (docs.ghost.org/install/ubuntu default) -- rejected: instance's 908MB RAM too tight for MySQL alongside Node/Ghost. SQLite used instead, explicitly documented as a deviation.
+
+**Ghost-CLI automated setup:**
+- Granting the non-root admin account passwordless sudo (needed by Ghost-CLI's `linux-user`/`systemd` setup stages) -- rejected: real standing privilege escalation, correctly blocked by the coding agent's safety classifier. Same operations replicated manually as root via the existing SSM session instead.
+
+**SSM VPC interface endpoints, post-install:**
+- Keeping them running continuously after install -- rejected once the Elastic IP + IGW route made their "no other internet route" justification moot; deleted.
+- "Recreate them periodically for maintenance windows" -- considered, written into the spec, then corrected: the EIP + IGW route is a permanent fixture of the architecture (not setup-time-only), so there is no future point that would need the endpoints back except a deliberate switch to private-backbone-only SSM isolation as a security preference.
