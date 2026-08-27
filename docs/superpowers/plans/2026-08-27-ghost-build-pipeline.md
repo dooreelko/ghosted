@@ -93,9 +93,12 @@ pnpm --filter ghost run archive
 ls ghost/core/package/../*.tgz 2>/dev/null || find ghost/core -maxdepth 1 -name "ghost-*.tgz"
 ```
 
-Expected: two tarballs matching `ghost-6.57.1.tgz` and
-`ghost-6.57.1-npm.tgz` (per `pack.mjs`'s header comment) appear under
-`ghost/core/`. This confirms the pipeline before Task 2 touches any code.
+Expected: one tarball, `ghost-6.57.1.tgz`, appears under `ghost/core/`.
+(At this base commit's version of `pack.mjs`, there's only one output —
+already npm-layout, top-level `package/` dir, no `node_modules` — not the
+two-tarball split `main`'s newer `pack.mjs` has grown since; confirmed
+directly against this checked-out commit's `pack.mjs` after Task 1 ran.)
+This confirms the pipeline before Task 2 touches any code.
 If this step fails, stop — it's a pipeline problem, not a patch problem,
 and nothing later in this plan will work until it's fixed.
 
@@ -386,12 +389,14 @@ fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
 console.log(pkg.version);
 "
 pnpm --filter ghost run archive
-find ghost/core -maxdepth 1 -name "ghost-*-npm.tgz"
+find ghost/core -maxdepth 1 -name "ghost-*.tgz"
 ```
 
-Expected: a single file matching `ghost-6.57.1-local.1-npm.tgz` (or
-whatever version Task 1 actually built from, with the `-local.1` suffix
-applied). Record this exact filename — later steps use it verbatim.
+Expected: a single file matching `ghost-6.57.1-local.1.tgz` (or whatever
+version Task 1 actually built from, with the `-local.1` suffix applied) —
+per Task 1's finding, this base commit's `pack.mjs` produces one
+already-npm-layout tarball, not a separate `-npm.tgz`. Record this exact
+filename — later steps use it verbatim.
 
 - [ ] **Step 3: Revert the version bump in git (the tarball itself carries the version, the source shouldn't)**
 
@@ -403,7 +408,7 @@ git checkout ghost/core/package.json
 
 ```bash
 cd /home/doo/projects/ghost
-./scripts/ssm-scp.sh push Ghost/ghost/core/ghost-6.57.1-local.1-npm.tgz /tmp/ghost-6.57.1-local.1-npm.tgz
+./scripts/ssm-scp.sh push Ghost/ghost/core/ghost-6.57.1-local.1.tgz /tmp/ghost-6.57.1-local.1.tgz
 ```
 
 (Substitute the exact filename from Step 2.)
@@ -417,7 +422,7 @@ aws ssm start-session --target <instance-id from .local-secrets.md>
 Inside the session:
 
 ```bash
-sudo -u ghost bash -c 'cd /var/www/ghost && ghost update --zip /tmp/ghost-6.57.1-local.1-npm.tgz --v1'
+sudo -u ghost bash -c 'cd /var/www/ghost && ghost update --zip /tmp/ghost-6.57.1-local.1.tgz --v1'
 ```
 
 (Confirm the exact flag against `ghost help update` on the instance first
@@ -454,7 +459,7 @@ didn't break the running blog.
 aws ssm start-session --target <instance-id from .local-secrets.md>
 ```
 
-Inside the session: `rm -f /tmp/ghost-6.57.1-local.1-npm.tgz`, then `exit`.
+Inside the session: `rm -f /tmp/ghost-6.57.1-local.1.tgz`, then `exit`.
 
 No repo commit for this task (deploy-only, no tracked file changes beyond
 what Task 2 already committed).
