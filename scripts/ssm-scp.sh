@@ -18,7 +18,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SECRETS_FILE="$REPO_ROOT/.local-secrets.md"
 
 PULL_CHUNK_BYTES=18000  # RunCommand stdout is capped per invocation; stay well under it
-PUSH_CHUNK_BYTES=6000   # push chunks ride inside the command text itself, not output — smaller cap
+PUSH_CHUNK_BYTES=80000  # push chunks ride inside the command doc itself: AWS's real cap is
+                         # MaxDocumentSizeExceeded at ~97KB total (empirically measured against
+                         # this account/region — verified OK up to 98500 bytes of payload, fails
+                         # at 99000), so 80000 leaves a solid margin for the fixed script text
+                         # around each chunk.
 
 if [[ ! -f "$SECRETS_FILE" ]]; then
   echo "error: $SECRETS_FILE not found (these scripts never hardcode the instance ID)" >&2
