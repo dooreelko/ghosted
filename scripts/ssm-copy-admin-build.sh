@@ -19,4 +19,4 @@ FROM="${1:?usage: $0 <from-version> <to-version>}"
 TO="${2:?usage: $0 <from-version> <to-version>}"
 
 echo "Copying core/built/admin: $FROM -> $TO"
-run_command "sudo -u ghostadmin bash -c 'cp -r /var/www/ghost/versions/$FROM/core/built/admin /var/www/ghost/versions/$TO/core/built/admin' && ls /var/www/ghost/versions/$TO/core/built/admin | head -5"
+run_command "sudo -u ghostadmin bash -c 'mkdir -p /var/www/ghost/versions/$TO/core/built && cp -r /var/www/ghost/versions/$FROM/core/built/admin /var/www/ghost/versions/$TO/core/built/admin' && ls /var/www/ghost/versions/$TO/core/built/admin | head -5"
