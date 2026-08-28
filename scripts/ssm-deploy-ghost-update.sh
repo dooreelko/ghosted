@@ -25,4 +25,4 @@ echo "Running ghost update --zip $REMOTE_TGZ --force as ghostadmin..."
 run_command "sudo -u ghostadmin -H bash -lc 'cd /var/www/ghost && ghost update --zip $REMOTE_TGZ --force' 2>&1"
 
 echo "Verifying deployed version..."
-run_command "sudo -u ghostadmin -H bash -lc 'cd /var/www/ghost && ghost --version' 2>&1; cat /var/www/ghost/package.json | grep -m1 version"
+run_command "sudo -u ghostadmin -H bash -lc 'cd /var/www/ghost && ghost --version' 2>&1; cat /var/www/ghost/current/package.json | grep -m1 version"
