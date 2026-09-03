@@ -11,7 +11,7 @@ for those, referenced here by role/name.
 | System | What | Where |
 |---|---|---|
 | EC2 instance | Single `t3.micro`, Ubuntu 26.04, no public inbound except via CloudFront's VPC origin | tagged `app:ghost-classic` / `Name:appserver` |
-| Ghost | Custom-built (not stock npm install) — see below | `/var/www/ghost`, managed by Ghost-CLI |
+| Ghost | Stock Ghost-CLI npm install — see below | `/var/www/ghost`, managed by Ghost-CLI |
 | nginx | Local reverse proxy, `:8000 → 127.0.0.1:2368` | systemd, config at `/etc/nginx/sites-enabled/` |
 | SQLite | Ghost's database (posts, members, settings) | `/var/www/ghost/content/data/` |
 | CloudFront | Public entry point for the whole domain (blog + pre-existing static site) | one distribution, two origins |
@@ -19,25 +19,25 @@ for those, referenced here by role/name.
 | SSM Session Manager | **Only** management path to the instance — no SSH, no bastion, no public IP for admin | `aws ssm start-session` / `scripts/ssm-*.sh` |
 | Elastic IP | Instance's outbound path (Proton SMTP + SSM control-plane are both IPv4-only) | see `phase1.md` "Design deviations" |
 
-## Ghost build (moth `qadpt`)
+## Ghost build
 
-Ghost is **not** the stock Ghost-CLI npm install. It's built from a fork
-(`dooreelko/Ghost`, this repo's `Ghost/` submodule) on a long-lived
-`local-patches` branch, based on upstream tag `v6.57.1`, carrying local
-patches — currently one: a live webfinger self-probe replacing
-`isSocialWebEnabled()`'s static subdirectory check (see moth `qadpt` for
-why). Deployed version as of this writing: `6.57.1-local.2`.
+Instance runs **stock Ghost from the npm registry**, deployed via
+ghost-cli's own `ghost update --force`
+(`scripts/ssm-switch-to-mainstream-ghost.sh`). Deployed version as of this
+writing: `6.62.0`.
 
-**Consequence:** a bare `ghost update` (pulling from the npm registry)
-would silently discard the patch and revert to stock Ghost. Always deploy
-via `scripts/ssm-deploy-ghost-update.sh` with a freshly built local
-archive. See `.local-secrets.md` → "Ghost Custom Build Deploy Pipeline" for
-the full deploy/rollback runbook.
-
-The build's tarball doesn't include the admin UI (a separately-built
-Vite/Ember app, unrelated to the backend-only patch) — it's copied
-same-host from the last-known-good version after each deploy via
-`scripts/ssm-copy-admin-build.sh`.
+Previously (2026-08-28 to 2026-09-03) the instance ran a custom fork build
+(`dooreelko/Ghost`, this repo's `Ghost/` submodule) carrying a local
+webfinger self-probe patch, built and deployed per moth `qadpt`. That patch
+was for `syigu` (Social Web); the plan changed and `syigu` will not use the
+custom build, so the instance was switched back to stock via
+`scripts/ssm-switch-to-mainstream-ghost.sh` on 2026-09-03. Ghost-CLI's
+update pruned the old `6.57.1-local.2` version dir during the switch — the
+only way back to the custom build now is a fresh rebuild from the fork, or
+the pre-switch instance backup in `.instance-backups/`. The fork submodule
+and build scripts (`scripts/ssm-deploy-ghost-update.sh`,
+`scripts/ssm-copy-admin-build.sh`) are unused going forward unless a future
+patch need reopens moth `qadpt`.
 
 ## nginx — actual config (verified live 2026-08-28)
 
