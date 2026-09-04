@@ -12,6 +12,7 @@ in pkgs.mkShellNoCC {
 	  pkgs.ssm-session-manager-plugin
 	  pkgs.chromium
 	  pkgs.nodejs_25
+      pkgs.drawio
 
 	  moth
    ];

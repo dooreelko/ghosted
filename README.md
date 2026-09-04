@@ -7,3 +7,14 @@ And since I'm a cloud architect, this will become a little project of creating a
 Common for all phases is that the blog should be accessible via https://the-well-architected-cloud.com/blog
 
 ## Phase 1. VM
+
+A naive single-VM implementation to establish a cost baseline.
+
+## Phase 2. Containers
+
+Containerize the application (aka improve resilience) without increasing costs (ideally decreasing).
+
+## Phase 3. Magic
+
+Make the application fully cloud-native, aka only running parts pf the application that are needed at the moment and only for as long as they are needed.
+
