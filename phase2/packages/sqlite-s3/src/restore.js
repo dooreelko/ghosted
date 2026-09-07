@@ -1,5 +1,5 @@
-import { writeFile, appendFile, rm } from 'node:fs/promises';
-import Database from 'better-sqlite3';
+import { rm, writeFile } from 'node:fs/promises';
+import { decodePageImages } from './page-images.js';
 
 export async function restoreLocalDb({ manifest, segmentStore, dbPath }) {
   await rm(dbPath, { force: true });
@@ -11,30 +11,35 @@ export async function restoreLocalDb({ manifest, segmentStore, dbPath }) {
     return; // truly nothing to restore — a fresh database
   }
 
+  let fileBytes = Buffer.alloc(0);
   if (manifest.baseSegmentId) {
     const base = await segmentStore.getSegment(manifest.baseSegmentId);
-    await writeFile(dbPath, base.bytes);
-  } else {
-    // No base snapshot has ever been taken (no checkpoint has run yet), but
-    // the manifest's walSegmentIds is the single global commit history —
-    // shared across every writer via the CAS-based manifest — so replaying
-    // it in full onto a freshly bootstrapped, valid, empty SQLite database
-    // reconstructs the same state regardless of which writer is restarting.
-    //
-    // The bootstrap must explicitly switch to WAL journal mode before
-    // closing: SQLite records the journal mode in the main file's header
-    // (the page-1 file-format-version bytes), and only consults a sibling
-    // `-wal` file when that header declares WAL mode. A plain
-    // `new Database(dbPath).close()` with no writes leaves a 0-byte file
-    // (rollback-journal mode, header absent) — SQLite then ignores the
-    // `-wal` file entirely and the replayed segments are silently lost.
-    const bootstrap = new Database(dbPath);
-    bootstrap.pragma('journal_mode = WAL');
-    bootstrap.close();
+    fileBytes = Buffer.from(base.bytes);
   }
+
+  const pageSize = manifest.pageSize;
+  let finalPageCount = pageSize > 0 ? Math.floor(fileBytes.length / pageSize) : 0;
 
   for (const walSegmentId of manifest.walSegmentIds ?? []) {
     const seg = await segmentStore.getSegment(walSegmentId);
-    await appendFile(`${dbPath}-wal`, seg.bytes);
+    const pages = decodePageImages(seg.bytes);
+    for (const { pageNumber, bytes } of pages) {
+      const endOffset = pageNumber * pageSize;
+      if (endOffset > fileBytes.length) {
+        const grown = Buffer.alloc(endOffset);
+        fileBytes.copy(grown);
+        fileBytes = grown;
+      }
+      bytes.copy(fileBytes, (pageNumber - 1) * pageSize);
+    }
+    if (seg.meta?.dbSizeAfterCommit) {
+      finalPageCount = seg.meta.dbSizeAfterCommit;
+    }
   }
+
+  if (finalPageCount > 0) {
+    fileBytes = fileBytes.subarray(0, finalPageCount * pageSize);
+  }
+
+  await writeFile(dbPath, fileBytes);
 }
