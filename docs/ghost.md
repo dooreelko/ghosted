@@ -107,9 +107,12 @@ the default (S3) behavior. Adding them is the remaining infra work for
   component; `syigu` was shelved alongside it since it depended on
   `gfoig`. See `moth show syigu` / `moth show gfoig` for the full
   reasoning.
-- Considered, not yet designed: an S3 bucket for large instance file
-  transfers (current chunked-over-SSM approach in `scripts/ssm-scp.sh` works
-  but is slow for anything much bigger than a few MB — needs an IAM change).
+- An S3 bucket for large instance file transfers (current chunked-over-SSM
+  approach in `scripts/ssm-scp.sh` works but is slow for anything much
+  bigger than a few MB) is folded into Phase 2's plan rather than designed
+  standalone — the S3 bucket already planned there for S3-backed SQLite
+  doubles as the migration-transfer path for `content/images/`. See
+  `phase2/readme.md`.
 - **Phase 2** (moth `hi3zi`): planning underway to convert this VM-based
   setup into Lightsail Containers with a Node.js-reimplemented S3-backed
   SQLite, IPv4 kept only for Proton SMTP. Not yet built — see

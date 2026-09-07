@@ -7,103 +7,150 @@ though it stays single-node for now. Also introduces OpenTofu as IaC and
 reorganizes phase-specific scripts/docs into per-phase directories (this
 directory; Phase 1's equivalent is `phase1/`).
 
+## Design
+
+- **Compute: Lightsail Containers** (Micro tier). Bundled load balancing +
+  HTTPS, fully managed platform, no OS to patch.
+- **DB: SQLite, backed by S3** via a Node.js reimplementation of an
+  append-only-segments-plus-versioned-manifest design, shipped with or as
+  part of the Ghost setup — not a managed DB service.
+- **Docker image**: fork `Ghost/` (already a submodule, reused from
+  `qadpt`'s build pipeline), build a custom SQLite-capable image.
+- **Image storage**: same S3 bucket as the S3-backed SQLite data.
+- **Credential path** from the container into our AWS account:
+  cross-account `AssumeRole`, no `ExternalId`. An IAM role in our account
+  trusts the Lightsail container service's own `principalArn` (one per
+  service, shared by every container/replica in it) as Principal — a live
+  OpenTofu resource reference, never a hardcoded account ID or secret.
+  Covers both the SMTP-credential read (SSM) and S3-backed-SQLite access
+  (S3) via one `AssumeRole` call at container startup. No static
+  credential of any kind is baked into the image or deployment config.
+- **Migration/cutover**: one-time backup-and-restore, downtime acceptable
+  — no live-sync. Back up the Phase 1 VM (config, SQLite db,
+  `content/images/`), restore into the new Lightsail/S3-backed setup, cut
+  CloudFront over. Image transfer via **S3, not `ssm-scp.sh`'s
+  chunked-base64 approach** (that approach caps out around a few MB; 15MB
+  of images is a bad fit) — the instance's IAM role gets `s3:PutObject`
+  on the same S3 bucket already used for S3-backed SQLite/image storage
+  (one bucket, one IAM change), tars and uploads `content/images/`
+  directly, pulled down locally with `aws s3 cp`. This also resolves the
+  standing "S3 bucket for large instance file transfers" gap noted in
+  `docs/ghost.md`. `ssm-backup-instance.sh` needs extending to capture
+  `content/images/` (currently deliberately excludes it) before this is
+  usable for the actual cutover.
+- **IaC**: OpenTofu, flat local state (no S3/remote backend), one file
+  per main component (`s3.tf`, `lightsail.tf`, `iam.tf`, etc.).
+
+**Accepted risk, not resolved**: whether the S3-backed SQLite
+reimplementation actually plugs into Ghost's Knex/sqlite3 data layer is
+**not spiked separately — discovered during implementation**. If it
+doesn't pan out, the fallback is a managed DB service, raising the total
+from ~$11-12/mo to ~$26/mo (see Cost comparison below). Exact integration
+shape (custom SQLite VFS vs. a Knex-layer shim vs. something else) will be
+decided then too.
+
+## Cost (this design)
+
+**~$11-12/mo** — Lightsail Micro compute $10 (bundled load balancing +
+HTTPS) + ~$1-2 S3 for the SQLite data and images, if the S3-backed-SQLite
+approach works out. **~$26/mo** if it doesn't and a managed DB (RDS or
+Lightsail DB) is needed instead — see the accepted risk above. Phase 1
+baseline for comparison: ~$8.24/mo. Full option-by-option comparison
+(Fargate, ECS-on-EC2, RDS floor) is in Cost comparison below.
+
+## Decisions and rejected alternatives
+
+- **Compute: Lightsail Containers**, not Fargate or ECS-on-EC2/plain
+  Docker. Fargate's apparent cost parity with ECS-on-EC2 depended on
+  skipping the load-balancer requirement (a Fargate task has no fixed IP,
+  and CloudFront's VPC origin needs one) — accounting for the ~$16.50/mo
+  NLB that requires erases the advantage. ECS-on-EC2/plain-Docker would
+  have been cheaper (no LB or managed-DB cost forced, since a stable EC2
+  private IP is something CloudFront's VPC origin can target directly),
+  but Lightsail's bundled load-balancing/HTTPS and fully managed platform
+  were preferred anyway.
+- **Lightsail's public-endpoint (non-VPC-private) posture: accepted.**
+  Phase 1's "no public inbound except via CloudFront" principle exists to
+  reduce a long-lived EC2 instance's attack surface, which doesn't apply
+  the same way to a managed container platform with no OS to patch.
+- **DB: S3-backed SQLite reimplemented in Node.js**, not adopting the
+  third-party [chrisk60331/distributed-sqllite](https://github.com/chrisk60331/distributed-sqllite)
+  repo directly (reimplementing instead so it integrates with Ghost's
+  actual data layer), and not RDS or Lightsail's managed DB (~$14-26/mo)
+  — Lightsail has no persistent-volume option at all, and the minimum
+  that works was preferred over paying for a full managed DB.
+- **Credential path: cross-account `AssumeRole`, no `ExternalId`.**
+  Rejected baking a static IAM access key into the image/deployment env
+  (real secrets-hygiene risk — visible in deployment history). Rejected
+  granting the container's ambient default identity direct resource
+  access (a Lightsail bucket grant, or a plain S3 bucket policy) instead
+  of an `AssumeRole` hop — both denied by AWS; that shared execution role
+  is scoped to essentially just `sts:AssumeRole`, confirming the role hop
+  is the sanctioned path, not a workaround. Rejected an `sts:ExternalId`
+  condition on the trust policy — only earns its keep when trusting a
+  whole account root; the per-service `principalArn` is already unique
+  and is the access boundary by itself.
+- **Docker image: fork, not upstream's compose packaging.** Moot to debate
+  whether upstream nominally supports SQLite via config, since it's a
+  custom fork build either way.
+- **Migration: one-time backup-and-restore, not live-sync.** Not needed
+  for a personal blog at this scale.
+
 ## Cost comparison
 
 Compute + storage + DB only — CloudFront, Route53, and mail are unchanged
 by this phase and are excluded. Content+DB size assumed ~2GB (personal
-blog, low image volume).
+blog, low image volume; confirmed live content is 15MB/76 files, well
+under this).
 
 Baseline (Phase 1, current): t3.micro on-demand ~$7.60/mo + 8GB gp3 EBS
 ~$0.64/mo ≈ **$8.24/mo**.
 
-Live investigation (SSM into the running instance, 2026-09-07) found Ghost
-itself uses ~230MB resident (peak 318MB, plus it actively swaps — 603MB of
-the 1GB swap file in use at check time). The RAM pressure driving the need
-for a 1GB swap file is mostly *not* Ghost — it's Ubuntu server's baseline
-daemon set stacked alongside it (`systemd-journald` 111MB, `fwupd` 31MB,
-`snapd` 23MB, SSM agent workers ~35MB, plus ModemManager/multipathd/
-udisksd/chronyd/rsyslogd/polkitd). None of that exists inside a container,
-so a containerized Ghost's real requirement is closer to 0.5GB than 1GB.
-
 | Option | Compute | Storage | DB | Total/mo | Fit |
 |---|---|---|---|---|---|
-| **ECS on EC2** | t3.micro $7.60 (same box, repurposed as ECS container instance) | EBS $0.64 + EFS (2GB, One Zone) $0.32 | $0 — SQLite file lives on EFS, single writer (one Ghost task) | **~$8.56** | Cheapest option, no LB needed, no forced DB service — because the instance keeps a stable private IP CloudFront's VPC origin can target directly |
-| **Fargate** | 0.25 vCPU / 0.5GB (revised down once the RAM investigation showed Ghost fits under 512MB without the VM's OS-daemon overhead): $8.99, **plus an NLB, ~$16.50/mo** — required because a Fargate task has no fixed IP, and CloudFront's VPC origin needs one (an ALB/NLB, specifically); see Networking and the CloudFront-connectivity question below | EFS (2GB) $0.32 | $0 — SQLite-on-EFS, same as ECS-on-EC2 | **~$25.81** | The NLB erases essentially all of Fargate's cost advantage — no longer close to ECS-on-EC2 |
-| **Lightsail Containers** | Micro $10/mo — **bundled load balancing + HTTPS included**, no separate LB charge (that $18/mo add-on is only for standalone Lightsail instances, not container services) | none — Lightsail containers categorically cannot attach a disk or EFS (confirmed platform limit, not tier-dependent); ephemeral 20GiB/node only | See below — S3-backed SQLite (reimplemented), not a managed DB service | **~$11-12/mo** if the S3-backed-SQLite approach works out (compute $10 + ~$1-2 S3 for DB+images); **~$26/mo** if it doesn't and a real managed DB (Lightsail DB or RDS) is needed instead | No VPC-private origin (public HTTPS endpoint) — a real security-posture difference from Phase 1's "no public inbound except via CloudFront" principle, but judged acceptable: that principle exists to reduce a long-lived EC2 instance's attack surface, which doesn't apply the same way to a managed container platform with no OS to patch |
+| **ECS on EC2** (not chosen) | t3.micro $7.60 (same box, repurposed as ECS container instance) | EBS $0.64 + EFS (2GB, One Zone) $0.32 | $0 — SQLite file lives on EFS, single writer (one Ghost task) | **~$8.56** | Cheapest option, no LB needed, no forced DB service — because the instance keeps a stable private IP CloudFront's VPC origin can target directly |
+| **Fargate** (rejected) | 0.25 vCPU / 0.5GB: $8.99, **plus an NLB, ~$16.50/mo** — required because a Fargate task has no fixed IP, and CloudFront's VPC origin needs one | EFS (2GB) $0.32 | $0 — SQLite-on-EFS | **~$25.81** | The NLB erases essentially all of Fargate's cost advantage |
+| **Lightsail Containers** (chosen) | Micro $10/mo — bundled load balancing + HTTPS included, no separate LB charge | none — Lightsail containers categorically cannot attach a disk or EFS (confirmed platform limit); ephemeral 20GiB/node only | S3-backed SQLite (reimplemented), not a managed DB service | **~$11-12/mo** if S3-backed-SQLite works out (compute $10 + ~$1-2 S3 for DB+images); **~$26/mo** if it doesn't and a managed DB is needed instead | No VPC-private origin — accepted tradeoff, see Decisions |
+| **Fargate + RDS MySQL** (reference only) | ~$8.99 | EFS (2GB) $0.32 | RDS `db.t4g.micro`, single-AZ, on-demand: $11.68 compute + $2.30 storage (20GB minimum) ≈ $13.98 | **~$23.29** | Real shared, multi-writer-capable DB — not needed at single-node scale |
 
-Compute: **Lightsail Containers**, pursued despite the non-VPC-private
-posture (see Decisions below) — Fargate's apparent cost parity with
-ECS-on-EC2 didn't hold up once the load-balancer requirement was
-accounted for, and Lightsail's bundled LB/HTTPS avoids that cost
-entirely. Its own forced-managed-DB cost is what the S3-backed SQLite
-work below is trying to avoid.
-
-Note for the record: ECS-on-EC2 (and, more starkly, plain `docker run` +
-systemd on the same EC2 instance) would also hit the ~$8.24-8.56/mo floor
-with no LB and no forced DB, by virtue of keeping a stable private IP
-CloudFront's VPC origin can target directly. Not chosen — Lightsail was.
-
-### Custom S3-backed SQLite (reimplementation, not adopting a third party)
-
-[chrisk60331/distributed-sqllite](https://github.com/chrisk60331/distributed-sqllite)
-demonstrates the approach that would remove Lightsail's forced-managed-DB
-cost (and could drop the EFS line from Fargate too): SQLite backed by S3
-via append-only segments + versioned manifests, snapshot isolation with
-CAS-based optimistic concurrency (not WAL-shipping like Litestream, not
-Raft consensus like rqlite/dqlite) — genuinely multi-writer-capable, and
-S3 is its only AWS dependency.
-
-Decision: **don't adopt that repo directly — reimplement the same idea in
-Node.js**, shipped with or as part of the Ghost setup, so it integrates
-with Ghost's actual data layer (Knex → `sqlite3`/`better-sqlite3`) instead
-of depending on an external, unverified, small third-party project.
-Exact integration shape (custom SQLite VFS vs. a Knex-layer shim vs.
-something else) not yet decided — "we'll see."
-
-**Open feasibility question, unresolved**: whether this can present as a
-normal SQLite file/connection to Ghost's existing data layer with no
-Ghost-side code changes, or whether it requires forking/patching Ghost's
-DB client. This is now the load-bearing question for whether Lightsail's
-~$11-12/mo figure is real or whether it falls back to ~$26/mo.
-
-### Cheapest viable RDS configuration
-
-The `~$23.29/mo` row above is already the floor for a real single-AZ RDS
-instance — `db.t4g.micro` (Graviton) is the cheapest current-generation
-class, cheaper than `db.t3.micro`; 20GB is RDS's minimum allocated storage
-for MySQL (can't go lower); single-AZ/no read replica/no enhanced
-monitoring/no Performance Insights all already assumed. Two levers left,
-neither free:
-
-- **RDS Free Tier**: 750 hrs/mo of `db.t4g.micro` + 20GB storage free for
-  12 months on an eligible account — would drop this to ~$0/mo for that
-  window, but only applies if this AWS account hasn't already used its
-  RDS free tier (unverified here).
-- **1-year no-upfront Reserved Instance**: cuts compute ~28% to $8.47/mo,
-  total **~$20.08/mo** — cheapest non-free-tier option, at the cost of a
-  1-year commitment (works against Fargate's whole pitch of no standing
-  commitment).
-
-Everything else that's "cheaper than RDS" stops being RDS: Aurora
-Serverless v2's minimum (0.5 ACU, ~$43.80/mo) is *more* expensive than a
-provisioned `db.t4g.micro`, not less, so it isn't a path to a lower floor.
+Cheapest viable RDS floor (for reference, not chosen): the `~$23.29/mo`
+row above is already the floor for a real single-AZ RDS instance —
+`db.t4g.micro` (Graviton) is the cheapest current-generation class, 20GB
+is RDS's minimum allocated storage for MySQL, single-AZ/no read
+replica/no enhanced monitoring already assumed. A 1-year no-upfront
+Reserved Instance would cut it to ~$20.08/mo (a standing commitment);
+RDS Free Tier could drop it to ~$0/mo for 12 months if unused on this
+account (unverified). Aurora Serverless v2's minimum (~$43.80/mo) is
+*more* expensive than provisioned `db.t4g.micro`, not a path to a lower
+floor.
 
 Sources: [AWS Fargate pricing](https://aws.amazon.com/fargate/pricing/),
 [AWS Lightsail pricing](https://aws.amazon.com/lightsail/pricing),
 [AWS EFS pricing](https://aws.amazon.com/efs/pricing/),
 [AWS RDS for MySQL pricing](https://aws.amazon.com/rds/mysql/pricing/).
 
-## Networking: IPv6 for AWS traffic, IPv4 only for Proton
+---
 
-**Superseded by the Lightsail decision above** — this investigation
-assumed a VPC-based compute option (ECS-on-EC2 or Fargate). Lightsail
-Containers don't use ECR pulls or EFS mounts the way this section
-describes, and Lightsail's own networking/IPv6 story hasn't been
-investigated yet — how the container reaches Proton over IPv4 for SMTP is
-an open question, not the "reuse the existing Elastic IP" answer below.
-Kept for the record since it may become relevant again if Lightsail's
-S3-backed-SQLite approach doesn't pan out and the fallback reopens
-ECS-on-EC2/Fargate.
+## Discussion: RAM investigation
+
+Live investigation (SSM into the running instance, 2026-09-07) found
+Ghost itself uses ~230MB resident (peak 318MB, plus it actively swaps —
+603MB of the 1GB swap file in use at check time). The RAM pressure
+driving the need for a 1GB swap file is mostly *not* Ghost — it's Ubuntu
+server's baseline daemon set stacked alongside it (`systemd-journald`
+111MB, `fwupd` 31MB, `snapd` 23MB, SSM agent workers ~35MB, plus
+ModemManager/multipathd/udisksd/chronyd/rsyslogd/polkitd). None of that
+exists inside a container, so a containerized Ghost's real requirement is
+closer to 0.5GB than 1GB — this is what let Fargate's compute estimate
+come down from an initial 0.5GB/1GB guess to 0.25 vCPU/0.5GB.
+
+## Discussion: networking (mostly superseded by the Lightsail choice)
+
+This investigation assumed a VPC-based compute option (ECS-on-EC2 or
+Fargate) and predates the Lightsail decision. Lightsail Containers don't
+use ECR pulls or EFS mounts the way this section describes. Kept for the
+record since it may become relevant again if Lightsail's S3-backed-SQLite
+approach doesn't pan out and the fallback reopens ECS-on-EC2/Fargate.
 
 Investigated whether ECR image pulls and EFS mounts support IPv6, since
 Proton SMTP (like SES) is IPv4-only and Phase 1's Elastic IP exists solely
@@ -130,70 +177,72 @@ pattern:
   Proton SMTP leg only — direct IGW egress, not NAT. ECR pulls and the EFS
   mount use IPv6 on the same dual-stack subnet. The public IPv4 hourly
   charge (~$3.60/mo since AWS's 2024 pricing change) already applies to
-  Phase 1's Elastic IP today, so this isn't a new cost line vs baseline —
-  it carries forward, already reflected in the comparison above.
+  Phase 1's Elastic IP today, so this isn't a new cost line vs baseline.
 
-## Ghost's own Docker packaging (reference, not adopted as-is)
+For Lightsail specifically: outbound IPv4 was confirmed working with zero
+setup in the hands-on test below. How the container reaches Proton is
+otherwise unresearched beyond that.
+
+## Discussion: Ghost's own Docker packaging (reference, not adopted as-is)
 
 `docs.ghost.org/install/docker` and `github.com/TryGhost/ghost-docker` both
 target **docker-compose**, not ECS/Fargate/Lightsail directly, and assume
 **MySQL** (no SQLite in that packaging) plus Caddy for TLS termination and
-optional Tinybird for analytics. Translating to any of the 3 options above
-means: compose env vars → task-definition/container env vars, the
-bind-mounted content volume → an EFS mount, and dropping Caddy entirely
-(CloudFront already terminates TLS at the edge). Whether to also adopt
-MySQL (via RDS) instead of keeping SQLite-on-EFS is a separate decision —
-not yet made; SQLite-on-EFS is assumed above as the lower-cost default.
+optional Tinybird for analytics. Translating to any of the compute options
+above would have meant: compose env vars → task-definition/container env
+vars, the bind-mounted content volume → an EFS mount, and dropping Caddy
+entirely (CloudFront already terminates TLS at the edge). Moot now that
+the Docker image is a custom fork build regardless.
 
-## Decisions made
+## Discussion: hands-on Lightsail tests (2026-09-07)
 
-- **Compute: Lightsail Containers** (Micro tier). Rejected Fargate — its
-  cost parity with ECS-on-EC2 depended on skipping the load-balancer
-  requirement, which doesn't hold up (a Fargate task has no fixed IP,
-  and CloudFront's VPC origin needs one — see Networking below — so an
-  NLB, ~$16.50/mo, is required and erases the advantage). Rejected
-  ECS-on-EC2/plain-Docker despite their lower cost floor, in favor of
-  Lightsail's bundled load-balancing/HTTPS and managed platform.
-- **Lightsail's public-endpoint (non-VPC-private) posture: accepted.**
-  The private-VPC requirement's purpose was reducing a long-lived EC2
-  instance's attack surface; that doesn't apply the same way to a
-  managed container platform with no OS to patch.
-- **DB direction: S3-backed SQLite, reimplemented in Node.js** (not
-  adopting the third-party `chrisk60331/distributed-sqllite` repo
-  directly), shipped with or as part of the Ghost setup — see below.
-  Chosen over a managed DB service (RDS/Lightsail DB) because Lightsail
-  has no persistent-volume option at all, and "minimum that works" was
-  preferred over paying for a full managed DB.
+Created and destroyed several real, throwaway Lightsail resources
+(container services, buckets, IAM roles) to validate the design rather
+than guess:
 
-## Open questions / not yet decided
+**Outbound IPv4**: confirmed working with zero setup. A test container
+reached `checkip.amazonaws.com` over IPv4 and got a real public address
+back — no NAT/VPC config needed.
 
-- **S3-backed SQLite feasibility** — does Ghost's Knex/sqlite3 data layer
-  work against a Node.js reimplementation of the S3-backed approach
-  without Ghost-side code changes, or does it need forking/patching
-  Ghost's DB client? Exact integration shape (custom SQLite VFS vs. a
-  Knex-layer shim vs. something else) also not yet decided. This is the
-  load-bearing question for the whole DB approach — if it doesn't pan
-  out, the fallback is a managed DB service, which raises the total from
-  ~$11-12/mo to ~$26/mo.
-- Docker image: official Ghost docker packaging assumes MySQL — does it
-  support SQLite via config/env vars at all, or does this need a custom
-  Dockerfile/entrypoint (reusing `qadpt`'s existing build pipeline)?
-- Lightsail's own networking/IPv4 story for reaching Proton SMTP —
-  unlike the ECS-on-EC2/Fargate answer above (reuse the existing Elastic
-  IP), Lightsail containers don't sit in the same VPC by default, so
-  this needs its own investigation, not a carried-forward answer.
-- Secrets handling: SSM Parameter Store injection currently happens via a
-  shell script on the VM; confirm Lightsail's equivalent (env vars from
-  SSM Parameter Store are supported in container service deployments)
-  covers the same SMTP-credential handling with no new secret-handling
-  gap.
-- Image storage: Ghost's S3-compatible storage adapter for uploads, and
-  whether it shares the same bucket as the S3-backed SQLite data or uses
-  a separate one.
-- How the existing VM's `/var/www/ghost/content` (images, SQLite db file)
-  gets migrated into the new setup — one-time cutover step.
-- OpenTofu module layout and what state backend to use (note: OpenTofu's
-  Lightsail provider support is thinner than its ECS/EC2 support —
-  worth confirming coverage for container service + bucket resources
-  before committing further).
-- Exact migration path/cutover plan from the Phase 1 VM to Lightsail.
+**Credential path — three iterations**:
+
+1. First, confirmed Lightsail containers run on Fargate under the hood
+   (`AWS_EXECUTION_ENV=AWS_ECS_FARGATE`) and get auto-injected credentials
+   via `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, but the assumed role
+   lives in an **AWS-managed backend account** (confirmed via
+   `sts get-caller-identity`: account `538342414145`, not this project's
+   own account) with zero permissions to our resources by default
+   (`ssm:GetParameter` → `AccessDeniedException`). The resource-access
+   route was tried too — Lightsail buckets can be granted to Lightsail
+   **instances**, but `set-resource-access-for-bucket` explicitly rejects
+   container services. The only documented credential path for container
+   services is the ECR-image-puller role, scoped to pulling private
+   images only.
+2. Tested the confused-deputy pattern: an IAM role in our own account,
+   trust policy naming the container service's `principalArn` as
+   Principal plus an `sts:ExternalId` condition, `ssm:GetParameter`
+   granted, container calls `sts.assume_role(RoleArn=...,
+   ExternalId=...)` using its auto-injected default credentials. **It
+   worked** — real parameter value came back.
+3. Tried to remove the `ExternalId` requirement by testing whether the
+   ambient default identity could instead read directly from a resource
+   grant (a Lightsail bucket's access grant, then a plain S3 bucket
+   policy naming the `principalArn` directly, no `AssumeRole` hop at
+   all) — **both denied**, the S3 bucket policy attempt with a generic
+   `AccessDenied` (no policy-detail message, unlike the earlier SSM
+   denial) — consistent with AWS deliberately scoping that shared
+   execution role down to essentially just `sts:AssumeRole`. Also
+   confirmed `principalArn` is one-per-*service* (not per-container or
+   per-scaled-node — every container and every replica in one Lightsail
+   container service shares the same `principalArn`), which is already
+   unique enough to be the access boundary without `ExternalId`.
+
+All test resources (container services, buckets, bucket access keys, IAM
+roles, SSM parameters) were deleted after each test. One classifier
+incident along the way: an early test tried baking a Lightsail bucket
+access key directly into a deployment's environment variables to check
+whether that could sidestep `AssumeRole` entirely — blocked by the
+permission classifier (secret-in-deployment pattern), which is
+functionally the same objection as the "don't bake static credentials
+into the image" decision above, arrived at independently by the
+classifier before the design decision was finalized.
