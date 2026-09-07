@@ -9,15 +9,17 @@ function fullJitterDelay(attempt, baseMs = 50, capMs = 2000) {
 
 export function createCommitter({ manifestStore, segmentStore, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   return {
-    async commitWalDelta(walBytes, frames) {
+    async commitWalDelta(payloadBytes, frames, pageSize) {
       const writeSet = writeSetFromFrames(frames);
+      const dbSizeAfterCommit = frames[frames.length - 1]?.dbSizeAfterCommit ?? 0;
       let { manifest, etag } = await manifestStore.read();
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-        const segmentId = await segmentStore.putSegment(walBytes, { writeSet });
+        const segmentId = await segmentStore.putSegment(payloadBytes, { writeSet, dbSizeAfterCommit });
         const nextManifest = {
           baseSegmentId: manifest ? manifest.baseSegmentId : null,
           walSegmentIds: manifest ? [...manifest.walSegmentIds, segmentId] : [segmentId],
+          pageSize: manifest ? manifest.pageSize : pageSize,
         };
         try {
           const result = await manifestStore.write(nextManifest, { expectedEtag: etag });
