@@ -1,4 +1,4 @@
-export { SqliteS3Client } from './knex-client.js';
+export { SqliteS3Client, registerS3Config } from './knex-client.js';
 export { createManifestStore, ManifestConflictError } from './manifest.js';
 export { createSegmentStore } from './segments.js';
 export { createCheckpointPolicy } from './checkpoint.js';

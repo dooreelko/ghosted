@@ -1,0 +1,21 @@
+services:
+  ghost-sqlite-s3:
+    image: node:22.23.1-bookworm-slim
+    working_dir: /app/Ghost/ghost/core
+    command:
+      - node
+      - --conditions=source
+      - --import=tsx
+      - --import=/app/phase2/packages/sqlite-s3/smoke/preload.mjs
+      - index.js
+    volumes:
+      - ../../../../:/app
+      - ${HOME}/.aws:/root/.aws:ro
+    environment:
+      NODE_ENV: development
+      AWS_PROFILE: default
+      AWS_SDK_LOAD_CONFIG: "1"
+      SQLITE_S3_BUCKET: "${SQLITE_S3_BUCKET:?set to the bucket from create-bucket.sh}"
+      SQLITE_S3_REGION: "${SQLITE_S3_REGION:?set to the bucket's region}"
+    ports:
+      - "2368:2368"

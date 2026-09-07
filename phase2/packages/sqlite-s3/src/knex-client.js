@@ -5,10 +5,27 @@ import { restoreLocalDb } from './restore.js';
 import { createCommitter } from './commit.js';
 import { parseWalHeader, parseFrames } from './wal.js';
 
+// Some hosts (observed with Ghost + knex-migrator) construct additional Knex
+// clients from an independently re-derived copy of the connection config
+// (e.g. Ghost's MigratorConfig.js snapshots `config.get('database')` at
+// require-time for knex-migrator's own use). Passing this._s3 through that
+// path is unreliable — a plain object nested with function-valued stores can
+// fail to survive whatever cloning/merging produced that independent copy,
+// even though a top-level class reference (`client: SqliteS3Client`) does.
+// A process-wide registration point sidesteps that entirely: every
+// SqliteS3Client instance in this process shares one S3 wiring, set once via
+// `registerS3Config()` before Ghost/Knex boot, regardless of how many
+// separately-constructed client instances end up existing.
+const registry = { s3: undefined };
+
+export function registerS3Config(s3Config) {
+  registry.s3 = s3Config;
+}
+
 export class SqliteS3Client extends BetterSQLite3Client {
   constructor(config) {
     super(config);
-    this._s3 = config.connection.s3;
+    this._s3 = config.connection.s3 ?? registry.s3;
     this._lastWalOffset = 0;
     this._pageSize = null;
   }
@@ -48,6 +65,16 @@ export class SqliteS3Client extends BetterSQLite3Client {
   }
 
   async _maybeCaptureCommit() {
+    // Some Knex-internal code paths invoke this method with `this` bound to
+    // an object that shares SqliteS3Client's prototype (so method lookup
+    // resolves) but was never run through `new SqliteS3Client(...)` — e.g. a
+    // lightweight clone Knex derives internally for pooling/transactions,
+    // observed in practice from knex-migrator's own connection handling. Such
+    // an object has none of this class's constructor-set instance state.
+    // The S3 wiring is process-wide by nature (one Ghost process, one S3
+    // bucket), so read it from the module-level registry directly rather
+    // than trusting `this._s3` — that's robust regardless of what `this` is.
+    const s3 = this._s3 ?? registry.s3;
     const walPath = `${this.connectionSettings.filename}-wal`;
     let size;
     try {
@@ -55,20 +82,26 @@ export class SqliteS3Client extends BetterSQLite3Client {
     } catch {
       return; // no WAL file yet (e.g. a read-only autocommit statement before any write)
     }
-    if (size <= this._lastWalOffset) return;
+    // Some Knex-internal code paths (observed via knex-migrator's own connection
+    // handling) construct client-like objects that never ran through our
+    // constructor, leaving this undefined rather than the constructor's 0.
+    // Treat a missing offset as "nothing captured yet" rather than propagating
+    // undefined into arithmetic (undefined - number = NaN => Buffer.alloc(NaN)).
+    const lastWalOffset = this._lastWalOffset ?? 0;
+    if (size <= lastWalOffset) return;
 
-    const delta = Buffer.alloc(size - this._lastWalOffset);
+    const delta = Buffer.alloc(size - lastWalOffset);
     const fd = openSync(walPath, 'r');
-    readSync(fd, delta, 0, delta.length, this._lastWalOffset);
+    readSync(fd, delta, 0, delta.length, lastWalOffset);
     closeSync(fd);
 
-    const isFirstCapture = this._lastWalOffset === 0;
+    const isFirstCapture = lastWalOffset === 0;
     const pageSize = isFirstCapture ? parseWalHeader(delta).pageSize : this._pageSize;
     const frames = parseFrames(delta, pageSize, isFirstCapture ? 32 : 0);
 
     const committer = createCommitter({
-      manifestStore: this._s3.manifestStore,
-      segmentStore: this._s3.segmentStore,
+      manifestStore: s3.manifestStore,
+      segmentStore: s3.segmentStore,
     });
     const outcome = await committer.commitWalDelta(delta, frames);
 
@@ -87,6 +120,6 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // Only advance past these bytes once they're confirmed durably shipped.
     this._pageSize = pageSize;
     this._lastWalOffset = size;
-    this._s3.checkpointPolicy.recordSegment(delta.length);
+    s3.checkpointPolicy.recordSegment(delta.length);
   }
 }
