@@ -45,3 +45,28 @@ test('restoreLocalDb rebuilds a real, openable database from a base segment plus
   assert.equal(row.v, 'hello');
   restored.close();
 });
+
+test('restoreLocalDb rebuilds a real, openable database from wal segments alone (no base segment yet)', async () => {
+  // Simulate a system that has never checkpointed: the manifest carries
+  // committed WAL segments but baseSegmentId is still null.
+  const sourcePath = await tmpPath('source-nobase.db');
+  const db = new Database(sourcePath);
+  db.pragma('journal_mode = WAL');
+  db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)');
+  db.prepare('INSERT INTO t (v) VALUES (?)').run('hello');
+
+  const walBytes = await readFile(`${sourcePath}-wal`);
+  db.close();
+
+  const segmentStore = createSegmentStore(createInMemoryObjectStore());
+  const walSegmentId = await segmentStore.putSegment(walBytes);
+  const manifest = { baseSegmentId: null, walSegmentIds: [walSegmentId] };
+
+  const restoredPath = await tmpPath('restored-nobase.db');
+  await restoreLocalDb({ manifest, segmentStore, dbPath: restoredPath });
+
+  const restored = new Database(restoredPath);
+  const row = restored.prepare('SELECT v FROM t WHERE id = 1').get();
+  assert.equal(row.v, 'hello');
+  restored.close();
+});
