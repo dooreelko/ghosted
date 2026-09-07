@@ -38,8 +38,6 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // and synchronously initializes the pool from it.
     super({ ...config, pool: { min: 1, max: 1 } });
     this._s3 = config.connection.s3 ?? registry.s3;
-    this._lastWalOffset = 0;
-    this._pageSize = null;
   }
 
   async acquireRawConnection() {
@@ -50,12 +48,6 @@ export class SqliteS3Client extends BetterSQLite3Client {
       segmentStore: this._s3.segmentStore,
       dbPath: this.connectionSettings.filename,
     });
-    // restoreLocalDb (page-image reconstruction) never produces a `-wal`
-    // file — it writes an already-consistent `.db` file directly. So there
-    // is never a restored WAL to account for: capture progress always
-    // starts fresh, exactly as it does for a brand-new database.
-    this._lastWalOffset = 0;
-    this._pageSize = null;
     const connection = await super.acquireRawConnection();
     // Commit capture reads deltas out of the `-wal` file, so the connection
     // must run in WAL journal mode (better-sqlite3 defaults to rollback-journal
@@ -69,6 +61,20 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // life of one connection is an already-accepted limitation, not a new
     // problem introduced by turning this off.
     connection.pragma('wal_autocheckpoint = 0');
+    // Capture progress (`lastWalOffset`/`pageSize`) describes one physical
+    // WAL file's read progress, which belongs to the CONNECTION, not to
+    // whichever client-like object happens to call _maybeCaptureCommit.
+    // Knex internally derives constructor-less clones of this client (e.g.
+    // the "trxClient" it builds for knex.transaction()) that share this
+    // class's prototype but never ran through `new SqliteS3Client(...)`, so
+    // storing this state on `this` meant every one of those differently-
+    // shaped `this`s restarted capture from scratch, re-shipping the ENTIRE
+    // WAL history on every transaction. restoreLocalDb (page-image
+    // reconstruction) never produces a `-wal` file — it writes an
+    // already-consistent `.db` file directly — so there is never a restored
+    // WAL to account for: capture progress always starts fresh here, exactly
+    // as it does for a brand-new database.
+    connection.__sqliteS3State = { lastWalOffset: 0, pageSize: null };
     return connection;
   }
 
@@ -98,12 +104,14 @@ export class SqliteS3Client extends BetterSQLite3Client {
     } catch {
       return; // no WAL file yet (e.g. a read-only autocommit statement before any write)
     }
-    // Some Knex-internal code paths (observed via knex-migrator's own connection
-    // handling) construct client-like objects that never ran through our
-    // constructor, leaving this undefined rather than the constructor's 0.
-    // Treat a missing offset as "nothing captured yet" rather than propagating
+    // Capture progress lives on the CONNECTION (see acquireRawConnection),
+    // not on `this` — `this` can be a constructor-less trxClient clone Knex
+    // derives internally, which never gets its own instance state. Fall
+    // back to a fresh shape defensively (shouldn't normally happen, since
+    // acquireRawConnection always sets this) rather than propagating
     // undefined into arithmetic (undefined - number = NaN => Buffer.alloc(NaN)).
-    const lastWalOffset = this._lastWalOffset ?? 0;
+    const state = connection.__sqliteS3State ?? { lastWalOffset: 0, pageSize: null };
+    const lastWalOffset = state.lastWalOffset ?? 0;
     if (size <= lastWalOffset) return;
 
     const delta = Buffer.alloc(size - lastWalOffset);
@@ -112,7 +120,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     closeSync(fd);
 
     const isFirstCapture = lastWalOffset === 0;
-    const pageSize = isFirstCapture ? parseWalHeader(delta).pageSize : this._pageSize;
+    const pageSize = isFirstCapture ? parseWalHeader(delta).pageSize : state.pageSize;
     const allFrames = parseFrames(delta, pageSize, isFirstCapture ? 32 : 0);
 
     // `connection.inTransaction === false` is also true immediately after a
@@ -160,7 +168,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
       // By this point the write has already committed locally — there is no
       // local transaction left to "retry" as itself. This writer's local
       // state has now diverged from the shared history; do NOT advance
-      // _lastWalOffset, so the next successful capture naturally
+      // state.lastWalOffset, so the next successful capture naturally
       // re-includes these bytes (plus whatever accumulates after) in one
       // larger delta/segment.
       const err = new Error(
@@ -184,8 +192,9 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // Advance by the trimmed amount, not the full delta — any bytes after
     // the last commit boundary (e.g. a rolled-back transaction's orphaned
     // frames) are not yet considered captured.
-    this._pageSize = pageSize;
-    this._lastWalOffset = lastWalOffset + trimEnd;
+    state.pageSize = pageSize;
+    state.lastWalOffset = lastWalOffset + trimEnd;
+    connection.__sqliteS3State = state;
     s3.checkpointPolicy.recordSegment(payload.length);
 
     // Checkpointing is a best-effort optimization (bounds restore time by
@@ -207,11 +216,43 @@ export class SqliteS3Client extends BetterSQLite3Client {
   }
 
   async transaction(container, config, outerTx) {
-    if (outerTx) {
+    // The trxClient clone Knex builds internally to run queries inside a
+    // transaction (see acquireRawConnection/_maybeCaptureCommit's comments)
+    // is created via Object.create(...) and never runs this constructor, so
+    // it has no `_s3` of its own. `_maybeCaptureCommit`'s fallback
+    // (`this._s3 ?? registry.s3`) only works if `registry.s3` was already
+    // populated — via the existing registerS3Config() — before the
+    // transaction ran. At the point `transaction()` runs, `this` is always
+    // the real, fully-constructed client (the trxClient clone doesn't exist
+    // yet), so `this._s3` is valid here. Populate the registry from it
+    // unconditionally, regardless of whether reconciliation retry is
+    // actually enabled below — ANY knex.transaction() call, opted in or
+    // not, can hit this same trxClient-has-no-`_s3` problem for ordinary
+    // commit-capture.
+    if (this._s3 && !registry.s3) {
+      registry.s3 = this._s3;
+    }
+
+    // Reconciliation retry is opt-in, not automatic. `knex.transaction()`
+    // has a second, callback-less calling form — `const trx = await
+    // knex.transaction(); ...; await trx.commit();` — which Knex implements
+    // by passing its own internal resolver function as `container`, not a
+    // real user callback. Retrying that form the same way a real callback
+    // gets retried deadlocks the connection pool forever (reproduced
+    // directly: every later query hangs until the pool's acquire timeout).
+    // There is no reliable way to distinguish the two calling forms here
+    // without coupling to Knex-internal, version-specific details, so
+    // retry only runs when the caller explicitly asks for it via
+    // `knex.transaction(fn, { sqliteS3Reconcile: true })`. Every other
+    // call — including the callback-less form, and every existing call in
+    // Ghost's codebase today — delegates straight through with zero
+    // behavior change from how it worked before reconciliation existed.
+    if (outerTx || !config?.sqliteS3Reconcile) {
       // Nested transactions (savepoints) share the parent's connection —
       // retrying by discarding and reacquiring a connection would break
-      // savepoint semantics. Reconciliation only applies to top-level
-      // transactions.
+      // savepoint semantics in any case, so reconciliation never applies to
+      // them regardless of the flag. Reconciliation only ever applies to
+      // opted-in, top-level transactions.
       return super.transaction(container, config, outerTx);
     }
     const MAX_RECONCILE_ATTEMPTS = 10;

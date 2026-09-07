@@ -328,12 +328,15 @@ test('a knex.transaction() callback is safely re-invoked against fresh state aft
 
   let attemptCount = 0;
   try {
-    const result = await knexA.transaction(async (trx) => {
-      attemptCount += 1;
-      const row = await trx('counters').where({ name: 'hits' }).first();
-      await trx('counters').where({ name: 'hits' }).update({ value: row.value + 1 });
-      return row.value + 1;
-    });
+    const result = await knexA.transaction(
+      async (trx) => {
+        attemptCount += 1;
+        const row = await trx('counters').where({ name: 'hits' }).first();
+        await trx('counters').where({ name: 'hits' }).update({ value: row.value + 1 });
+        return row.value + 1;
+      },
+      { sqliteS3Reconcile: true }
+    );
 
     assert.equal(writeAttempts, 2, 'the manifest write must have genuinely conflicted once, then succeeded on retry');
     assert.equal(attemptCount, 2, 'the transaction callback must have been re-invoked exactly once after the conflict');
@@ -347,5 +350,144 @@ test('a knex.transaction() callback is safely re-invoked against fresh state aft
   } finally {
     registerS3Config(undefined);
     await knexA.destroy();
+  }
+});
+
+// Critical fix: reconciliation retry must be opt-in, not automatic — the
+// callback-less `knex.transaction()` calling form (no `container` argument;
+// Knex passes its own internal resolver in its place) must keep working
+// exactly as it always did. Before this fix, EVERY knex.transaction() call
+// went through the retry loop, which deadlocks that calling form's pool
+// forever on a conflict; this test proves the calling form itself still
+// completes normally with no conflict involved, i.e. it isn't broken by
+// anything added to transaction() in this file.
+test('knex.transaction() with no callback (callback-less form) still completes normally', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const knex = makeKnex(dbPath, makeS3Config(store));
+  try {
+    await knex.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+
+    const trx = await knex.transaction();
+    await trx('widgets').insert({ name: 'gizmo' });
+    await trx.commit();
+
+    const rows = await knex('widgets').select('*');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].name, 'gizmo');
+  } finally {
+    await knex.destroy();
+  }
+});
+
+// Important #1 fix: registry.s3 must get populated from `this._s3` inside
+// transaction() itself, so reconciliation works even for a caller who wires
+// up SqliteS3Client purely via `connection: {s3: {...}}` (this package's own
+// documented approach, used by every other test in this file) and never
+// calls registerS3Config() directly. Explicitly clear the registry first —
+// an earlier test in this file (the conflict-reconciliation test above) may
+// have already left it populated from ITS OWN _s3, which would let this test
+// pass by accident rather than actually proving the fix.
+test('knex.transaction({sqliteS3Reconcile: true}) works without ever calling registerS3Config()', async () => {
+  registerS3Config(undefined); // ensure no leaked config from an earlier test
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const knex = makeKnex(dbPath, makeS3Config(store));
+  try {
+    await knex.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+
+    // Must not throw "Cannot read properties of undefined (reading
+    // 'manifestStore')" — which is what happens if the trxClient clone
+    // Knex builds internally can't find S3 wiring via `this._s3 ??
+    // registry.s3` during commit-capture.
+    const result = await knex.transaction(
+      async (trx) => {
+        await trx('widgets').insert({ name: 'sprocket' });
+        return 'ok';
+      },
+      { sqliteS3Reconcile: true }
+    );
+    assert.equal(result, 'ok');
+
+    const rows = await knex('widgets').select('*');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].name, 'sprocket');
+  } finally {
+    registerS3Config(undefined);
+    await knex.destroy();
+  }
+});
+
+// Important #2 fix: capture state (lastWalOffset/pageSize) must live on the
+// CONNECTION, not on `this` — otherwise every transaction's trxClient clone
+// (which has no instance state of its own) resets capture to "nothing
+// shipped yet," causing the NEXT ordinary write's capture to re-parse and
+// re-ship the entire WAL history (including a prior rolled-back
+// transaction's orphaned frames) as an inflated write-set. This test rolls
+// back a transaction with real writes inside it, then performs a genuinely
+// separate, small, real committed write outside any transaction, and checks
+// the shipped segment's write-set only reflects that second write's own
+// pages.
+test('a rolled-back transaction does not inflate the write-set of a later, separate commit (Important #2)', async () => {
+  const store = createInMemoryObjectStore();
+  const s3Config = makeS3Config(store);
+  const dbPath = await tmpDbPath();
+  const knex = makeKnex(dbPath, s3Config);
+  try {
+    await knex.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+    // The table creation above already shipped a segment; note how many
+    // segments exist before the rollback + follow-up write so we can find
+    // the NEW one shipped by the follow-up write specifically.
+    const before = await s3Config.manifestStore.read();
+    const segmentCountBefore = before.manifest.walSegmentIds.length;
+
+    // A transaction with real writes that then rolls back — its frames get
+    // physically spilled into the -wal file before the ROLLBACK, but must
+    // never be captured/shipped since the transaction never committed.
+    await assert.rejects(
+      knex.transaction(async (trx) => {
+        // Insert several rows so real WAL frames get written before the
+        // deliberate failure below triggers a rollback.
+        for (let i = 0; i < 5; i += 1) {
+          await trx('widgets').insert({ name: `rolled-back-${i}` });
+        }
+        throw new Error('deliberate rollback');
+      })
+    );
+
+    // A genuinely separate, small, real committed write outside any
+    // transaction.
+    await knex('widgets').insert({ name: 'the-real-one' });
+
+    const after = await s3Config.manifestStore.read();
+    const newSegmentIds = after.manifest.walSegmentIds.slice(segmentCountBefore);
+    assert.equal(newSegmentIds.length, 1, 'exactly one new segment must have been shipped for the follow-up write');
+
+    const seg = await s3Config.segmentStore.getSegment(newSegmentIds[0]);
+    // A single one-row insert into a small, already-created table touches
+    // very few pages (root/page for the table + any index/freelist
+    // bookkeeping) — nowhere near what re-shipping the rolled-back
+    // transaction's 5 inserts on top of it would produce. Assert the
+    // write-set is small and plausible, not inflated.
+    assert.ok(Array.isArray(seg.meta.writeSet), 'segment must carry a writeSet');
+    assert.ok(
+      seg.meta.writeSet.length <= 3,
+      `write-set for a single small insert must be small (got ${seg.meta.writeSet.length} pages: ${JSON.stringify(seg.meta.writeSet)}) — an inflated write-set means the rolled-back transaction's frames leaked into this capture`
+    );
+
+    const rows = await knex('widgets').select('*').orderBy('id');
+    assert.equal(rows.length, 1, 'only the real committed write must be visible — the rolled-back inserts must not appear');
+    assert.equal(rows[0].name, 'the-real-one');
+  } finally {
+    await knex.destroy();
   }
 });
