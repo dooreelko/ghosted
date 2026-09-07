@@ -17,7 +17,7 @@ for those, referenced here by role/name.
 | CloudFront | Public entry point for the whole domain (blog + pre-existing static site) | one distribution, two origins |
 | S3 | Existing static site (default/root CloudFront behavior) | pre-existing, not part of the Ghost work |
 | SSM Session Manager | **Only** management path to the instance — no SSH, no bastion, no public IP for admin | `aws ssm start-session` / `scripts/ssm-*.sh` |
-| Elastic IP | Instance's outbound path (Proton SMTP + SSM control-plane are both IPv4-only) | see `phase1.md` "Design deviations" |
+| Elastic IP | Instance's outbound path (Proton SMTP + SSM control-plane are both IPv4-only) | see `phase1/readme.md` "Design deviations" |
 
 ## Ghost build
 
@@ -101,13 +101,16 @@ the default (S3) behavior. Adding them is the remaining infra work for
 
 ## Known gaps / in-progress
 
-- `syigu` (Social Web): probe patch deployed and correctly fail-safe (no
-  route to check yet), blocked on `gfoig`.
-- `gfoig` (TryGhost ActivityPub self-hosted server): not started. Self-hosted
-  Ghost has **no local ActivityPub server at all** — `ghost/core`'s
-  `activity-pub-service.ts` only talks to `.ghost/activitypub/v1/...`, which
-  is Ghost(Pro)'s managed cloud infrastructure, not something self-hosted
-  installs get automatically.
+- `syigu` (Social Web) and `gfoig` (TryGhost ActivityPub self-hosted
+  server): both **shelved** 2026-08-28 — `gfoig` turned out to be
+  Ghost(Pro)'s own multi-tenant SaaS backend, not a self-hostable
+  component; `syigu` was shelved alongside it since it depended on
+  `gfoig`. See `moth show syigu` / `moth show gfoig` for the full
+  reasoning.
 - Considered, not yet designed: an S3 bucket for large instance file
   transfers (current chunked-over-SSM approach in `scripts/ssm-scp.sh` works
   but is slow for anything much bigger than a few MB — needs an IAM change).
+- **Phase 2** (moth `hi3zi`): planning underway to convert this VM-based
+  setup into Lightsail Containers with a Node.js-reimplemented S3-backed
+  SQLite, IPv4 kept only for Proton SMTP. Not yet built — see
+  `phase2/readme.md` for the design and open questions.
