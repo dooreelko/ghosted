@@ -110,6 +110,25 @@ A new base segment is created when *either* condition is met:
 Checkpointing bounds startup replay time regardless of write pattern
 (bursty or idle).
 
+**Implementation (added after the page-image redesign):** checkpointing
+was originally left unwired because a naive implementation — one
+writer's local file, WAL-checkpointed and re-uploaded as the new base —
+would silently drop other writers' already-committed pages its own
+local file never received. The page-image redesign's restore logic
+(base + overlay every wal segment's page images, in manifest order,
+truncated to the max `dbSizeAfterCommit`) already solves exactly this
+problem for restoring a fresh connection; checkpointing reuses the same
+merge logic rather than a writer's own local state. Concretely: read
+the current manifest and its ETag, build the merged file bytes the same
+way a restore would (this reflects every writer's history, not just the
+checkpointing writer's), upload that as a new base segment, then
+conditionally-PUT a manifest pointing at `{baseSegmentId: <new base>,
+walSegmentIds: []}` against the ETag read at the start. On conflict
+(another writer landed a new segment mid-merge) the checkpoint attempt
+is simply abandoned — it is a best-effort optimization, not a
+correctness-critical operation, and will be retried the next time the
+trigger policy fires.
+
 ## Startup
 
 Before Ghost/Knex opens the database connection: pull the base segment
@@ -149,6 +168,52 @@ break. (An earlier version of this section relied on SQLite's own WAL
 recovery instead — see the Revision note above for why that doesn't
 survive multiple independent writers.)
 
+## Conflict reconciliation (added after the page-image redesign)
+
+By the time a commit loses the optimistic-concurrency race (an
+overlapping write landed first), the local SQLite commit has already
+physically happened — `better-sqlite3` is a real synchronous embedded
+engine, not a deferred-commit layer, so there is no local transaction
+left to safely "retry" once that's true. Investigating the third-party
+Python reference's own reconciliation mechanism (it defers all physical
+persistence until after a successful CAS, so it can safely re-execute
+buffered SQL text against a fresh snapshot on conflict) confirmed why
+this design couldn't do the same thing directly: its conflict check is
+at the SQL-text level (table names, knowable before running anything),
+knowable ahead of actually running a transaction; this design's is at
+the page level, only knowable *after* SQLite has actually run the
+transaction, since page allocation is an internal B-tree decision. That
+tension is real, not a gap to code around.
+
+The reconciliation this design *can* offer instead: for writes made
+through Knex's `knex.transaction(async trx => {...})` callback API, the
+client can, on conflict, restore local state from the now-current
+manifest (reusing the same restore logic as startup) and **re-invoke
+the caller's own callback function** against that fresh state — not
+replay recorded SQL text. This is safe against the staleness risk the
+Python reference's text-replay approach carries (e.g. a relative update
+like `x = x + 1` replayed against different underlying data produces a
+silently wrong result): re-running the original JS callback re-reads
+current values fresh each time it executes, using real bound
+parameters throughout, not string-interpolated SQL.
+
+**This does not cover every write.** A survey of Ghost's actual model
+layer found usage is mixed: complex/relational models (post, user,
+member, comment) self-wrap writes in `ghostBookshelf.transaction(fn)`
+when the caller didn't supply one — these are covered. Simpler models
+(tag, label, redirect, invite, settings, and others relying on the
+shared CRUD plugin's default `add`/`edit`/`destroy`) commonly perform
+bare, un-wrapped autocommit writes with no `.transaction()` involved at
+all when the API layer doesn't pass `{transacting}` — and it typically
+doesn't. A bare autocommit write that loses a conflict race still has
+no safe retry path under this design; the honest error framing
+(described above) is what a caller on that path sees. Extending
+coverage there would need either a different mechanism (retrying the
+single known statement directly — still carries the same staleness
+risk for non-idempotent statements) or changes to Ghost's own model
+layer to wrap more writes in `.transaction()`, which is out of scope
+for this package.
+
 ## Integration point
 
 A new package, `phase2/packages/sqlite-s3/`, implements a Knex client
@@ -183,21 +248,10 @@ itself rather than relying on the caller to configure it correctly.
 
 ## Known limitations (accepted, tracked as follow-ups)
 
-- **Checkpointing isn't wired to actually run.** `checkpoint.js`'s
-  trigger policy exists and is fed data, but nothing calls it to
-  create a new base segment — the manifest's WAL-segment list grows
-  unboundedly. A correct implementation needs the checkpointing writer
-  to fully replay the current manifest (not just its own local state)
-  before creating a new base, since a writer's local file may be
-  missing other writers' already-committed pages; this wasn't
-  specified in enough detail to build safely yet.
-- **No reconciliation when a commit loses a conflict race.** By the
-  time a conflict is detected, the local SQLite commit has already
-  physically happened — there's no local transaction left to "retry."
-  The error surfaced to the caller says so honestly rather than
-  implying a safe retry path exists. Real reconciliation needs
-  pre-commit validation, which `better-sqlite3`'s synchronous
-  transaction model doesn't support without a larger redesign.
+- **Bare autocommit writes (no `knex.transaction()` wrapper) still have
+  no safe retry path on a lost conflict race.** See "Conflict
+  reconciliation" above — this covers Ghost's relational models but not
+  its simpler ones, which write autocommit by default.
 - **One S3 round-trip per SQL-level commit doesn't scale to
   write-heavy bursts.** Confirmed live against a real Ghost boot:
   Ghost's first-ever-boot fixture insertion issues roughly 177
