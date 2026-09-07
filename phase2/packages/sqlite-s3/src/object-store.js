@@ -59,7 +59,17 @@ export function createS3ObjectStore({ bucket, client = new S3Client({}) }) {
         const res = await client.send(new PutObjectCommand(input));
         return { etag: res.ETag };
       } catch (err) {
-        if (err.$metadata?.httpStatusCode === 412) {
+        // 412 Precondition Failed is S3's standard "someone else won the
+        // race" response for a failed If-Match/If-None-Match. S3 can also
+        // return 409 with error name ConditionalRequestConflict for a
+        // conditional write racing another conditional write to the same
+        // key — same "retry, you lost the race" condition in practice, so
+        // map it the same way. A plain 409-status check (without also
+        // requiring the name) is intentionally broad here: 409 is less
+        // universally a precondition-failure signal than 412 is, but for
+        // this client every write to a given key is always conditional, so
+        // there's no other 409 case to conflate it with.
+        if (err.$metadata?.httpStatusCode === 412 || err.$metadata?.httpStatusCode === 409) {
           throw makeError('PreconditionFailed', `${key} precondition failed`);
         }
         throw err;

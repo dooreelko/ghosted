@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createInMemoryObjectStore } from '../src/object-store.js';
+import { createInMemoryObjectStore, createS3ObjectStore } from '../src/object-store.js';
 
 test('put then get round-trips bytes and returns a stable etag', async () => {
   const store = createInMemoryObjectStore();
@@ -40,4 +40,51 @@ test('ifMatch succeeds when the etag matches, and updates the etag', async () =>
   const got = await store.get('k');
   assert.equal(got.bytes.toString(), 'b');
   assert.equal(got.etag, second.etag);
+});
+
+test('S3-backed store maps a 409 ConditionalRequestConflict to PreconditionFailed', async () => {
+  const fakeClient = {
+    async send() {
+      const err = new Error('ConditionalRequestConflict');
+      err.name = 'ConditionalRequestConflict';
+      err.$metadata = { httpStatusCode: 409 };
+      throw err;
+    },
+  };
+  const store = createS3ObjectStore({ bucket: 'test-bucket', client: fakeClient });
+  await assert.rejects(
+    () => store.put('k', Buffer.from('a'), { ifNoneMatch: true }),
+    (err) => err.code === 'PreconditionFailed'
+  );
+});
+
+test('S3-backed store maps a 412 precondition failure to PreconditionFailed', async () => {
+  const fakeClient = {
+    async send() {
+      const err = new Error('PreconditionFailed');
+      err.name = 'PreconditionFailed';
+      err.$metadata = { httpStatusCode: 412 };
+      throw err;
+    },
+  };
+  const store = createS3ObjectStore({ bucket: 'test-bucket', client: fakeClient });
+  await assert.rejects(
+    () => store.put('k', Buffer.from('a'), { ifNoneMatch: true }),
+    (err) => err.code === 'PreconditionFailed'
+  );
+});
+
+test('S3-backed store rethrows unrelated errors unchanged', async () => {
+  const fakeClient = {
+    async send() {
+      const err = new Error('boom');
+      err.$metadata = { httpStatusCode: 500 };
+      throw err;
+    },
+  };
+  const store = createS3ObjectStore({ bucket: 'test-bucket', client: fakeClient });
+  await assert.rejects(
+    () => store.put('k', Buffer.from('a'), { ifNoneMatch: true }),
+    (err) => err.message === 'boom' && err.code === undefined
+  );
 });
