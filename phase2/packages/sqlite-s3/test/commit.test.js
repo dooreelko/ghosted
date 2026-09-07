@@ -46,6 +46,27 @@ test('segment meta records dbSizeAfterCommit from the last frame', async () => {
   assert.deepEqual(seg.meta.writeSet, [1, 2]);
 });
 
+test('pageSize self-heals on the next commit if the read manifest is missing it (I-B)', async () => {
+  const { committer, manifestStore, segmentStore } = setup();
+  await committer.commitWalDelta(Buffer.from('a'), [{ pageNumber: 1, dbSizeAfterCommit: 1 }], PAGE_SIZE);
+
+  // Simulate a manifest that lost its pageSize field (old-format manifest, or
+  // an unrelated bug) — reading it back should not propagate `undefined`
+  // forever; the next commit must fall back to its own passed-in pageSize.
+  const brokenManifestStore = {
+    async read() {
+      const { manifest, etag } = await manifestStore.read();
+      return { manifest: { ...manifest, pageSize: undefined }, etag };
+    },
+    write: manifestStore.write.bind(manifestStore),
+  };
+  const healingCommitter = createCommitter({ manifestStore: brokenManifestStore, segmentStore, sleep: async () => {} });
+  await healingCommitter.commitWalDelta(Buffer.from('b'), [{ pageNumber: 2, dbSizeAfterCommit: 2 }], PAGE_SIZE);
+
+  const { manifest } = await manifestStore.read();
+  assert.equal(manifest.pageSize, PAGE_SIZE);
+});
+
 test('two non-overlapping commits both land (second rebases automatically)', async () => {
   const { committer, manifestStore } = setup();
   // Writer A reads manifest version 0, then commits touching page 1.

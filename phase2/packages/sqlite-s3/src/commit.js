@@ -19,7 +19,7 @@ export function createCommitter({ manifestStore, segmentStore, sleep = (ms) => n
         const nextManifest = {
           baseSegmentId: manifest ? manifest.baseSegmentId : null,
           walSegmentIds: manifest ? [...manifest.walSegmentIds, segmentId] : [segmentId],
-          pageSize: manifest ? manifest.pageSize : pageSize,
+          pageSize: manifest?.pageSize ?? pageSize,
         };
         try {
           const result = await manifestStore.write(nextManifest, { expectedEtag: etag });

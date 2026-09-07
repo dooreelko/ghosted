@@ -11,10 +11,26 @@ export async function restoreLocalDb({ manifest, segmentStore, dbPath }) {
     return; // truly nothing to restore — a fresh database
   }
 
+  if (hasWalSegments && !(Number.isInteger(manifest.pageSize) && manifest.pageSize > 0)) {
+    throw new Error(
+      `restoreLocalDb: manifest.pageSize is missing or invalid (${manifest.pageSize}) but wal segments exist — cannot compute page offsets`
+    );
+  }
+
   let fileBytes = Buffer.alloc(0);
   if (manifest.baseSegmentId) {
     const base = await segmentStore.getSegment(manifest.baseSegmentId);
     fileBytes = Buffer.from(base.bytes);
+
+    if (manifest.pageSize && fileBytes.length >= 18) {
+      const rawPageSize = fileBytes.readUInt16BE(16);
+      const basePageSize = rawPageSize === 1 ? 65536 : rawPageSize;
+      if (basePageSize !== manifest.pageSize) {
+        throw new Error(
+          `restoreLocalDb: manifest.pageSize (${manifest.pageSize}) does not match the base segment's own page size (${basePageSize})`
+        );
+      }
+    }
   }
 
   const pageSize = manifest.pageSize;
@@ -33,7 +49,7 @@ export async function restoreLocalDb({ manifest, segmentStore, dbPath }) {
       bytes.copy(fileBytes, (pageNumber - 1) * pageSize);
     }
     if (seg.meta?.dbSizeAfterCommit) {
-      finalPageCount = seg.meta.dbSizeAfterCommit;
+      finalPageCount = Math.max(finalPageCount, seg.meta.dbSizeAfterCommit);
     }
   }
 
