@@ -4,6 +4,7 @@ import { statSync, readSync, openSync, closeSync } from 'node:fs';
 import { restoreLocalDb } from './restore.js';
 import { createCommitter } from './commit.js';
 import { parseWalHeader, parseFrames } from './wal.js';
+import { extractPageImages, encodePageImages } from './page-images.js';
 
 // Some hosts (observed with Ghost + knex-migrator) construct additional Knex
 // clients from an independently re-derived copy of the connection config
@@ -48,38 +49,12 @@ export class SqliteS3Client extends BetterSQLite3Client {
       segmentStore: this._s3.segmentStore,
       dbPath: this.connectionSettings.filename,
     });
-    // restoreLocalDb may have just reconstructed a NON-EMPTY `-wal` file from
-    // the manifest's segments. `_lastWalOffset` must start at the byte
-    // length of whatever restore just wrote (0 if there's no `-wal` file at
-    // all, e.g. a fresh/empty database) — NOT unconditionally 0 — otherwise
-    // the next capture would re-ship the entire restored WAL history as a
-    // brand-new duplicate segment. On a later restart that duplicate segment
-    // sits in the middle of the manifest's segment list starting with a
-    // second, unexpected 32-byte WAL header instead of a 24-byte frame
-    // header, and SQLite's WAL recovery halts right there — silently
-    // truncating away every real write that came after it.
-    let restoredWalSize = 0;
-    try {
-      restoredWalSize = statSync(`${this.connectionSettings.filename}-wal`).size;
-    } catch {
-      // no -wal file — fresh/empty database, offset starts at 0
-    }
-    this._lastWalOffset = restoredWalSize;
-    // If restore wrote a non-empty WAL, the next capture is no longer "the
-    // first capture" in the `lastWalOffset === 0` sense, so
-    // `_maybeCaptureCommit` won't derive `_pageSize` from the delta's own
-    // header. Derive it here instead, from the restored `-wal` file's own
-    // header (bytes 0-31) — the page size can't change within one WAL
-    // file's lifetime, so this is exactly the value the next capture needs.
-    if (restoredWalSize > 0) {
-      const walFd = openSync(`${this.connectionSettings.filename}-wal`, 'r');
-      const header = Buffer.alloc(32);
-      readSync(walFd, header, 0, 32, 0);
-      closeSync(walFd);
-      this._pageSize = parseWalHeader(header).pageSize;
-    } else {
-      this._pageSize = null;
-    }
+    // restoreLocalDb (page-image reconstruction) never produces a `-wal`
+    // file — it writes an already-consistent `.db` file directly. So there
+    // is never a restored WAL to account for: capture progress always
+    // starts fresh, exactly as it does for a brand-new database.
+    this._lastWalOffset = 0;
+    this._pageSize = null;
     const connection = await super.acquireRawConnection();
     // Commit capture reads deltas out of the `-wal` file, so the connection
     // must run in WAL journal mode (better-sqlite3 defaults to rollback-journal
@@ -164,14 +139,21 @@ export class SqliteS3Client extends BetterSQLite3Client {
     }
     const lastCommitFrame = allFrames[lastCommitFrameIndex];
     const trimEnd = lastCommitFrame.offset + lastCommitFrame.length;
-    const trimmedDelta = delta.subarray(0, trimEnd);
     const frames = allFrames.slice(0, lastCommitFrameIndex + 1);
+
+    // Extract page images from the trimmed frames (deduped last-write-wins
+    // per page) and encode them as this segment's payload — see
+    // docs/superpowers/specs/2026-09-07-sqlite-s3-design.md's Revision note
+    // for why this replaced shipping raw WAL bytes (final review finding C2:
+    // WAL checksum chains can't be spliced across independent writers).
+    const pages = extractPageImages(delta, frames, pageSize);
+    const payload = encodePageImages(pages);
 
     const committer = createCommitter({
       manifestStore: s3.manifestStore,
       segmentStore: s3.segmentStore,
     });
-    const outcome = await committer.commitWalDelta(trimmedDelta, frames);
+    const outcome = await committer.commitWalDelta(payload, frames, pageSize);
 
     if (outcome.retryTransaction) {
       // By this point the write has already committed locally — there is no
@@ -191,6 +173,6 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // frames) are not yet considered captured.
     this._pageSize = pageSize;
     this._lastWalOffset = lastWalOffset + trimEnd;
-    s3.checkpointPolicy.recordSegment(trimmedDelta.length);
+    s3.checkpointPolicy.recordSegment(payload.length);
   }
 }

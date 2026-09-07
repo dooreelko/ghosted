@@ -143,3 +143,40 @@ test('a rolled-back transaction is not shipped, and a subsequent real commit sur
   assert.equal(rows[0].title, 'committed row');
   await knexB.destroy();
 });
+
+// Regression test for C2: segments committed by two SEPARATE Knex/SqliteS3Client
+// instances (simulating two real concurrent writer processes, each with its own
+// local file and its own independently-random WAL header salts) must both survive
+// being restored by a third instance. This is the scenario raw-WAL-byte segments
+// could not support — writer B's segment would corrupt recovery at the seam where
+// it was spliced onto writer A's WAL history.
+test('data committed by two independent writer instances both survive a later restore (C2)', async () => {
+  const store = createInMemoryObjectStore();
+
+  const dbPathA = await tmpDbPath();
+  const knexA = makeKnex(dbPathA, makeS3Config(store));
+  await knexA.schema.createTable('posts', (t) => {
+    t.increments('id');
+    t.string('title');
+  });
+  await knexA('posts').insert({ title: 'from writer A' });
+  await knexA.destroy();
+
+  // Writer B: a SEPARATE instance that restores from the same S3 state (so it
+  // picks up writer A's table) and then writes its own row — a genuinely
+  // independent local file with its own WAL lineage, not a continuation of A's.
+  const dbPathB = await tmpDbPath();
+  const knexB = makeKnex(dbPathB, makeS3Config(store));
+  await knexB('posts').insert({ title: 'from writer B' });
+  await knexB.destroy();
+
+  // A third instance restoring from the shared S3 state must see both rows.
+  const dbPathC = await tmpDbPath();
+  const knexC = makeKnex(dbPathC, makeS3Config(store));
+  const rows = await knexC('posts').select('title').orderBy('id');
+  assert.deepEqual(
+    rows.map((r) => r.title),
+    ['from writer A', 'from writer B']
+  );
+  await knexC.destroy();
+});
