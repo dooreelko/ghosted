@@ -118,9 +118,27 @@ the base segment's raw bytes as the `<db>` file, then replay each WAL
 segment in manifest order, writing each page image directly to its
 byte offset (`(pageNumber - 1) × pageSize`) — extending the file if a
 page number falls beyond its current length. After replaying
-everything, truncate the file to the page count carried by the *last*
-segment's `dbSizeAfterCommit` (the authoritative final size; handles a
-`VACUUM` or similar shrinking the database). The result is an
+everything, truncate the file to the **maximum** `dbSizeAfterCommit`
+carried by *any* segment, not the last one.
+
+**Correction (final review of the page-image redesign):** the first
+version of this section truncated to the last segment's
+`dbSizeAfterCommit`, reasoning it was "the authoritative final size."
+That's only true for a linear history. Under genuine concurrent
+writers, two commits with disjoint write-sets can both legitimately
+land — one that grows the database (e.g. a new row forcing a new page)
+and one that doesn't (e.g. updating an existing page) — and if the
+non-growing commit lands later in manifest order, truncating to *its*
+(smaller, stale) page count discards the growing commit's pages
+entirely, producing a corrupt, unopenable database. This was
+reproduced directly: two disjoint-write-set commits, both accepted by
+the CAS protocol, corrupted the restored file under the last-segment
+rule and passed a clean `PRAGMA integrity_check` under the max rule.
+Taking the max is safe in the other direction too — a genuine `VACUUM`
+shrink is not silently corrupting if ignored (SQLite trusts page 1's
+own size field when the file's change counter matches, so untruncated
+trailing pages are simply unused, not consulted), whereas
+under-truncation is actively corrupting. The result is an
 already-consistent `<db>` file with no pending WAL at all — SQLite
 opens it directly, no recovery step involved.
 
