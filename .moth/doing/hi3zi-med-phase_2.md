@@ -82,3 +82,17 @@ submodule per component.
 
 Full cost comparison, all research/verification detail (including the
 hands-on Lightsail tests), and sourcing are in `phase2/readme.md`.
+
+
+## Subtasks
+
+- `vt4m9` (Sqlite S3): implement SQLite-over-S3, plug into Ghost, smoke
+  test locally with Docker.
+- `hnj9a` (Docker Iac): adapt Docker image, IaC for Lightsail & co under
+  `phase2/iac/` — including the cross-account IAM role/trust policy.
+- `i8hlt` (Wrapup): migration/cutover (extend `ssm-backup-instance.sh`,
+  backup-and-restore, CloudFront origin switch) and real-environment
+  validation against the deployed Lightsail setup, not just the local
+  smoke test — covers the credential-path wiring between `vt4m9` and
+  `hnj9a` too, since it spans both (IaC creates the role, app code calls
+  `AssumeRole`).
