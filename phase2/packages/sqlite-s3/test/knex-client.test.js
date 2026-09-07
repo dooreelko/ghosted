@@ -8,7 +8,7 @@ import { createInMemoryObjectStore } from '../src/object-store.js';
 import { createSegmentStore } from '../src/segments.js';
 import { createManifestStore } from '../src/manifest.js';
 import { createCheckpointPolicy } from '../src/checkpoint.js';
-import { SqliteS3Client } from '../src/knex-client.js';
+import { SqliteS3Client, registerS3Config } from '../src/knex-client.js';
 
 async function tmpDbPath() {
   const dir = await mkdtemp(path.join(tmpdir(), 'sqlite-s3-knex-test-'));
@@ -269,4 +269,83 @@ test('data committed by two independent writer instances both survive a later re
     ['from writer A', 'from writer B']
   );
   await knexC.destroy();
+});
+
+// Task 4: transaction() reconciliation. The brief's own test sketch used a
+// mocked manifestStore.write that didn't force a REAL page-level conflict
+// (it was flagged as needing adjustment). This version forces a genuine
+// conflict by having a completely separate writer instance (knexB) commit a
+// real, independent update to the EXACT SAME ROW that knexA's transaction is
+// also updating, in the narrow window between knexA's manifest read and its
+// manifest write landing. Because both writers touch the same SQLite page,
+// commit.js's overlap check is guaranteed to detect a real conflict (not
+// merely a manifest-etag race it could silently fast-forward past), so this
+// exercises the actual reconciliation path rather than an artificial one.
+test('a knex.transaction() callback is safely re-invoked against fresh state after losing a conflict race', async () => {
+  const store = createInMemoryObjectStore();
+  // Both writers below get their own manifestStore/segmentStore/checkpointPolicy
+  // instances (as two real, independent writer processes would), all backed
+  // by the same underlying shared S3 object store.
+  const s3ConfigA = makeS3Config(store);
+  const manifestStoreA = s3ConfigA.manifestStore;
+
+  const dbPathA = await tmpDbPath();
+  const knexA = makeKnex(dbPathA, s3ConfigA);
+
+  await knexA.schema.createTable('counters', (t) => {
+    t.string('name').primary();
+    t.integer('value');
+  });
+  await knexA('counters').insert({ name: 'hits', value: 0 });
+
+  // Knex builds a lightweight "trxClient" clone for every query run inside
+  // knex.transaction() (see node_modules/knex/lib/execution/transaction.js's
+  // makeTxClient) that shares SqliteS3Client's prototype but skips the
+  // constructor, so it never gets its own `_s3`. `_maybeCaptureCommit`
+  // already falls back to the module-level registry for exactly this case
+  // (see its comment) — register knexA's config so the COMMIT query (which
+  // runs through that trxClient) can find it. Reset it after this test so it
+  // doesn't leak into other tests in this file.
+  registerS3Config(s3ConfigA);
+
+  // From this point on, intercept knexA's manifest writes. On the FIRST
+  // call (made by the transaction under test below), let a totally separate
+  // writer (knexB) commit a real, independent change to the SAME row first,
+  // so that knexA's own write — still carrying the etag it read before
+  // knexB's write landed — genuinely loses the CAS race.
+  let writeAttempts = 0;
+  const realWriteA = manifestStoreA.write.bind(manifestStoreA);
+  manifestStoreA.write = async (manifest, opts) => {
+    writeAttempts += 1;
+    if (writeAttempts === 1) {
+      const dbPathB = await tmpDbPath();
+      const knexB = makeKnex(dbPathB, makeS3Config(store));
+      await knexB('counters').where({ name: 'hits' }).update({ value: 100 });
+      await knexB.destroy();
+    }
+    return realWriteA(manifest, opts);
+  };
+
+  let attemptCount = 0;
+  try {
+    const result = await knexA.transaction(async (trx) => {
+      attemptCount += 1;
+      const row = await trx('counters').where({ name: 'hits' }).first();
+      await trx('counters').where({ name: 'hits' }).update({ value: row.value + 1 });
+      return row.value + 1;
+    });
+
+    assert.equal(writeAttempts, 2, 'the manifest write must have genuinely conflicted once, then succeeded on retry');
+    assert.equal(attemptCount, 2, 'the transaction callback must have been re-invoked exactly once after the conflict');
+    // The retried callback must have observed knexB's committed value (100),
+    // proving it ran against genuinely fresh state restored from S3 — not the
+    // stale value (0) the first attempt saw, and not zero re-invocations.
+    assert.equal(result, 101, 'the result must reflect exactly one increment applied on top of the fresh (post-conflict) state, not zero or double-applied');
+
+    const finalRow = await knexA('counters').where({ name: 'hits' }).first();
+    assert.equal(finalRow.value, 101, 'exactly one increment must be reflected on top of the fresh state, not zero or double-counted');
+  } finally {
+    registerS3Config(undefined);
+    await knexA.destroy();
+  }
 });

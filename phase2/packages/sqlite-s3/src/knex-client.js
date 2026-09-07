@@ -80,7 +80,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     return result;
   }
 
-  async _maybeCaptureCommit() {
+  async _maybeCaptureCommit(connection) {
     // Some Knex-internal code paths invoke this method with `this` bound to
     // an object that shares SqliteS3Client's prototype (so method lookup
     // resolves) but was never run through `new SqliteS3Client(...)` — e.g. a
@@ -158,14 +158,26 @@ export class SqliteS3Client extends BetterSQLite3Client {
 
     if (outcome.retryTransaction) {
       // By this point the write has already committed locally — there is no
-      // local transaction left to "retry". A caller retry would duplicate
-      // data. This writer's local state has now diverged from the shared
-      // history; do NOT advance _lastWalOffset, so the next successful
-      // capture naturally re-includes these bytes (plus whatever
-      // accumulates after) in one larger delta/segment.
-      throw new Error(
-        "sqlite-s3: local write committed but lost an optimistic-concurrency race shipping to S3 — this writer's local state has now diverged from the shared history (see docs/superpowers/specs/2026-09-07-sqlite-s3-design.md's accepted risks; full reconciliation is a follow-up)"
+      // local transaction left to "retry" as itself. This writer's local
+      // state has now diverged from the shared history; do NOT advance
+      // _lastWalOffset, so the next successful capture naturally
+      // re-includes these bytes (plus whatever accumulates after) in one
+      // larger delta/segment.
+      const err = new Error(
+        "sqlite-s3: local write committed but lost an optimistic-concurrency race shipping to S3 — this writer's local state has diverged from the shared history"
       );
+      // Tag so `transaction()` below knows this is a safe-to-retry conflict,
+      // not an arbitrary error the caller should just see.
+      err.sqliteS3Conflict = true;
+      // Mark the connection disposed so Knex's pool discards it and the next
+      // acquire runs acquireRawConnection() again, which restores fresh
+      // state from S3 — this is an existing Knex convention (used
+      // internally by Knex's own dialects), not something this package
+      // invented; see Step 1's verification.
+      if (connection) {
+        connection.__knex__disposed = err;
+      }
+      throw err;
     }
 
     // Only advance past these bytes once they're confirmed durably shipped.
@@ -192,5 +204,31 @@ export class SqliteS3Client extends BetterSQLite3Client {
     } catch (err) {
       console.error('sqlite-s3: checkpoint attempt failed (non-fatal):', err);
     }
+  }
+
+  async transaction(container, config, outerTx) {
+    if (outerTx) {
+      // Nested transactions (savepoints) share the parent's connection —
+      // retrying by discarding and reacquiring a connection would break
+      // savepoint semantics. Reconciliation only applies to top-level
+      // transactions.
+      return super.transaction(container, config, outerTx);
+    }
+    const MAX_RECONCILE_ATTEMPTS = 10;
+    let lastErr;
+    for (let attempt = 0; attempt < MAX_RECONCILE_ATTEMPTS; attempt += 1) {
+      try {
+        return await super.transaction(container, config, outerTx);
+      } catch (err) {
+        if (!err.sqliteS3Conflict) throw err;
+        lastErr = err;
+        // The connection was marked __knex__disposed when the conflict was
+        // detected (see _maybeCaptureCommit), so the retried
+        // super.transaction() call below will acquire a fresh connection —
+        // re-running restoreLocalDb against the now-current S3 state —
+        // before re-invoking `container` against that fresh state.
+      }
+    }
+    throw lastErr;
   }
 }
