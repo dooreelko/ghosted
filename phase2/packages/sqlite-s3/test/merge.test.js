@@ -16,6 +16,7 @@ test('buildMergedFileBytes overlays a wal segment onto the base at the correct o
   const segmentStore = createSegmentStore(createInMemoryObjectStore());
   const pageSize = 16;
   const baseBytes = Buffer.alloc(pageSize * 2, 0x00);
+  baseBytes.writeUInt16BE(pageSize, 16);
   const baseSegmentId = await segmentStore.putSegment(baseBytes);
   const walSegmentId = await segmentStore.putSegment(
     encodePageImages([{ pageNumber: 2, bytes: Buffer.alloc(pageSize, 0xaa) }]),
@@ -32,7 +33,8 @@ test('buildMergedFileBytes overlays a wal segment onto the base at the correct o
 test('buildMergedFileBytes truncates to the maximum dbSizeAfterCommit across all segments', async () => {
   const segmentStore = createSegmentStore(createInMemoryObjectStore());
   const pageSize = 16;
-  const baseBytes = Buffer.alloc(pageSize, 0x00);
+  const baseBytes = Buffer.alloc(pageSize * 2, 0x00);
+  baseBytes.writeUInt16BE(pageSize, 16);
   const baseSegmentId = await segmentStore.putSegment(baseBytes);
   // First segment grows the db to 3 pages; second (landing later) only touches page 1
   // with a smaller dbSizeAfterCommit — must NOT truncate away the growth.

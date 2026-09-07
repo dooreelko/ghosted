@@ -20,7 +20,7 @@ export async function buildMergedFileBytes({ manifest, segmentStore }) {
     if (manifest.pageSize && fileBytes.length >= 18) {
       const rawPageSize = fileBytes.readUInt16BE(16);
       const basePageSize = rawPageSize === 1 ? 65536 : rawPageSize;
-      if (basePageSize !== 0 && basePageSize !== manifest.pageSize) {
+      if (basePageSize !== manifest.pageSize) {
         throw new Error(
           `buildMergedFileBytes: manifest.pageSize (${manifest.pageSize}) does not match the base segment's own page size (${basePageSize})`
         );
