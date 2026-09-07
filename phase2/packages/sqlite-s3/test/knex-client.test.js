@@ -89,6 +89,96 @@ test('data survives two successive simulated restarts (C1: no duplicate-shipping
   await knexC.destroy();
 });
 
+test('a checkpoint runs when the policy says to, and merges accumulated commits into a new base segment', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPathA = await tmpDbPath();
+
+  // A checkpoint policy that says "checkpoint" as soon as ANY bytes have
+  // been recorded, so this test doesn't depend on real size/time thresholds.
+  const manifestStore = createManifestStore(store);
+  const segmentStore = createSegmentStore(store);
+  let recorded = 0;
+  const checkpointPolicy = {
+    recordSegment: (n) => { recorded += n; },
+    shouldCheckpoint: () => recorded > 0,
+    recordCheckpoint: () => { recorded = 0; },
+  };
+
+  const knexA = knexFactory({
+    client: SqliteS3Client,
+    connection: { filename: dbPathA, s3: { manifestStore, segmentStore, checkpointPolicy } },
+    useNullAsDefault: true,
+  });
+  await knexA.schema.createTable('posts', (t) => {
+    t.increments('id');
+    t.string('title');
+  });
+  await knexA('posts').insert({ title: 'hello' });
+  await knexA.destroy();
+
+  const { manifest } = await manifestStore.read();
+  assert.ok(manifest.baseSegmentId, 'a base segment must exist after a checkpoint ran');
+  assert.deepEqual(manifest.walSegmentIds, [], 'wal segments must be cleared after checkpointing');
+
+  // Data must still be intact after the checkpoint, from a fresh instance.
+  const dbPathB = await tmpDbPath();
+  const knexB = knexFactory({
+    client: SqliteS3Client,
+    connection: { filename: dbPathB, s3: { manifestStore, segmentStore, checkpointPolicy: makeS3Config(store).checkpointPolicy } },
+    useNullAsDefault: true,
+  });
+  const rows = await knexB('posts').select('*');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].title, 'hello');
+  await knexB.destroy();
+});
+
+test('a checkpoint failure does not break the caller\'s actual write', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const segmentStore = createSegmentStore(store);
+  const manifestStore = {
+    read: async () => { throw new Error('boom: simulated checkpoint read failure'); },
+    write: createManifestStore(store).write,
+  };
+  const checkpointPolicy = {
+    recordSegment: () => {},
+    shouldCheckpoint: () => true, // always try to checkpoint
+    recordCheckpoint: () => {},
+  };
+
+  // Use a SEPARATE, working manifestStore for the actual commit path, and only
+  // make performCheckpoint's own read() call fail — simulate this by using a
+  // real manifestStore for commits but asserting the write still succeeds
+  // even though checkpointing will throw internally when it tries to read.
+  const realManifestStore = createManifestStore(store);
+  const knex = knexFactory({
+    client: SqliteS3Client,
+    connection: {
+      filename: dbPath,
+      s3: {
+        manifestStore: realManifestStore,
+        segmentStore,
+        checkpointPolicy: {
+          recordSegment: () => {},
+          shouldCheckpoint: () => { throw new Error('boom: simulated checkpoint policy failure'); },
+          recordCheckpoint: () => {},
+        },
+      },
+    },
+    useNullAsDefault: true,
+  });
+
+  await knex.schema.createTable('posts', (t) => {
+    t.increments('id');
+  });
+  // If checkpoint wiring isn't wrapped in try/catch, this insert would reject.
+  await knex('posts').insert({});
+  const rows = await knex('posts').select('*');
+  assert.equal(rows.length, 1);
+  await knex.destroy();
+});
+
 // Regression test for I3: the pool must always be pinned to exactly one
 // connection, regardless of what's passed in `config.pool` — otherwise a
 // second pooled connection could acquire concurrently and delete the local

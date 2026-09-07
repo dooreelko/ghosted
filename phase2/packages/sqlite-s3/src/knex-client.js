@@ -5,6 +5,7 @@ import { restoreLocalDb } from './restore.js';
 import { createCommitter } from './commit.js';
 import { parseWalHeader, parseFrames } from './wal.js';
 import { extractPageImages, encodePageImages } from './page-images.js';
+import { performCheckpoint } from './checkpoint.js';
 
 // Some hosts (observed with Ghost + knex-migrator) construct additional Knex
 // clients from an independently re-derived copy of the connection config
@@ -174,5 +175,22 @@ export class SqliteS3Client extends BetterSQLite3Client {
     this._pageSize = pageSize;
     this._lastWalOffset = lastWalOffset + trimEnd;
     s3.checkpointPolicy.recordSegment(payload.length);
+
+    // Checkpointing is a best-effort optimization (bounds restore time by
+    // periodically merging the growing wal-segment history into a new base
+    // segment) — never let a failure here break the caller's actual write.
+    try {
+      if (s3.checkpointPolicy.shouldCheckpoint()) {
+        const result = await performCheckpoint({
+          manifestStore: s3.manifestStore,
+          segmentStore: s3.segmentStore,
+        });
+        if (result.checkpointed) {
+          s3.checkpointPolicy.recordCheckpoint();
+        }
+      }
+    } catch (err) {
+      console.error('sqlite-s3: checkpoint attempt failed (non-fatal):', err);
+    }
   }
 }
