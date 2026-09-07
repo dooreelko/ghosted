@@ -197,6 +197,26 @@ silently wrong result): re-running the original JS callback re-reads
 current values fresh each time it executes, using real bound
 parameters throughout, not string-interpolated SQL.
 
+**Retry is opt-in, not automatic** (correction after implementation
+review): `knex.transaction()` has a second, callback-less calling form
+— `const trx = await knex.transaction(); ...; await trx.commit();` —
+used in Ghost's own codebase (e.g. its `timetravel` CLI command). Knex
+implements that form by passing its own internal resolver function as
+the "container," not a real user callback; retrying that form the same
+way genuinely deadlocks the connection pool (reproduced directly: every
+later query hangs until the pool's acquire timeout, forever — strictly
+worse than the clean rejection that existed before reconciliation was
+added). Distinguishing the two calling forms reliably at the point this
+client's `transaction()` override runs is not possible without coupling
+to Knex-internal, version-specific implementation details. The safe
+choice is to make retry an explicit opt-in: a caller passes
+`knex.transaction(fn, { sqliteS3Reconcile: true })` to get
+reconciliation; every other call — including every existing call in
+Ghost's codebase today — behaves exactly as it did before this
+capability existed. Extending Ghost's own relational-model transaction
+call sites to actually pass that flag is a separate, small, deliberate
+change to Ghost itself, not part of this package.
+
 **This does not cover every write.** A survey of Ghost's actual model
 layer found usage is mixed: complex/relational models (post, user,
 member, comment) self-wrap writes in `ghostBookshelf.transaction(fn)`
