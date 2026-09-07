@@ -3,3 +3,4 @@
 .local-secrets.md
 .serena
 .instance-backups
+scripts/route53-mailgun*

@@ -13,6 +13,7 @@ in pkgs.mkShellNoCC {
 	  pkgs.chromium
 	  pkgs.nodejs_25
       pkgs.drawio
+      pkgs.sqlite
 
 	  moth
    ];
