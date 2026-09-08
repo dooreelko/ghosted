@@ -108,3 +108,16 @@ branch roles (`main`/`fork_main`/feature branches), pointing at
 **Not run this session**: the smoke test itself (needs a live S3
 bucket + AWS credentials + manual post-creation step) — the pipeline's
 git/branch/package mechanics were exercised directly instead.
+
+
+**Smoke-test run attempted, live**: ran `scripts/sync-ghost.sh`
+end-to-end (main ff'd, fork_main synced, launcher pin checked) with
+real AWS credentials present. The smoke test's own manual gate
+("create a post, press enter") blocked the unattended run and the
+script exited non-zero there — leaked a throwaway bucket and a running
+container, cleaned up by hand. In response, the sync script now tears
+down the smoke containers and deletes the bucket after a *successful*
+run (only when it created the bucket itself) — on failure both are
+left in place for debugging, per the existing "stop and report, never
+auto-revert" stance. The smoke test's manual post-creation step itself
+stays as-is (not automated) — out of scope for this ticket.

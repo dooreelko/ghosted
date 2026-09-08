@@ -14,12 +14,19 @@
 #   3. If phase2/packages/sqlite-s3 changed since the launcher's pinned git
 #      dependency ref, bump ghost-sqlite-s3-launcher/package.json to this
 #      repo's current HEAD commit and report that a commit is needed here.
-#   4. Run the sqlite-s3 smoke test against fork_main + current sqlite-s3.
-#      On failure, stop and report — never auto-revert.
+#   4. Create a random throwaway S3 bucket (unless SQLITE_S3_BUCKET is
+#      already set) and run the sqlite-s3 smoke test against fork_main +
+#      current sqlite-s3. Optimistic: just attempts it, so this step fails
+#      outright if AWS credentials aren't available — that's expected, not
+#      handled specially. On success, tears down the smoke containers and
+#      deletes the bucket (only if this script created it). On failure,
+#      leaves both in place for debugging — matches "stop and report,
+#      never auto-revert" above.
 #
 # Usage: scripts/sync-ghost.sh
-# Requires: SQLITE_S3_BUCKET, SQLITE_S3_REGION set (passed through to the
-# smoke test), AWS credentials for that bucket.
+# Optional: SQLITE_S3_BUCKET, SQLITE_S3_REGION (default: a random
+# `sqlite-s3-smoke-<timestamp>-<random>` bucket in us-east-1). AWS
+# credentials for creating/using that bucket.
 
 set -euo pipefail
 
@@ -59,8 +66,23 @@ else
 fi
 
 echo "== Running sqlite-s3 smoke test against fork_main (now checked out in $GHOST_DIR) =="
-: "${SQLITE_S3_BUCKET:?set SQLITE_S3_BUCKET first}"
-: "${SQLITE_S3_REGION:?set SQLITE_S3_REGION}"
+export SQLITE_S3_REGION="${SQLITE_S3_REGION:-us-east-1}"
+WE_CREATED_BUCKET=0
+if [ -z "${SQLITE_S3_BUCKET:-}" ]; then
+  export SQLITE_S3_BUCKET="sqlite-s3-smoke-$(date +%s)-$RANDOM"
+  WE_CREATED_BUCKET=1
+  echo "SQLITE_S3_BUCKET not set — creating throwaway bucket $SQLITE_S3_BUCKET"
+  "$SQLITE_S3_DIR/smoke/create-bucket.sh" "$SQLITE_S3_BUCKET" "$SQLITE_S3_REGION"
+fi
 "$SQLITE_S3_DIR/smoke/run-smoke-test.sh"
+
+# Only reached on success — the smoke test's own `set -e` stops this script
+# first on failure, leaving the bucket/containers for post-mortem.
+echo "== Smoke test passed — tearing down containers =="
+docker compose -f "$SQLITE_S3_DIR/smoke/docker-compose.smoke.yaml" down
+if [ "$WE_CREATED_BUCKET" = 1 ]; then
+  echo "== Deleting throwaway bucket $SQLITE_S3_BUCKET =="
+  aws s3 rb "s3://$SQLITE_S3_BUCKET" --force
+fi
 
 echo "== Sync complete =="
