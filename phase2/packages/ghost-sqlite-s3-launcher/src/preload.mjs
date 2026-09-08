@@ -44,6 +44,7 @@ writeCredentialProcessProfile({
 process.env.AWS_CONFIG_FILE = awsConfigPath;
 process.env.AWS_SDK_LOAD_CONFIG = '1';
 process.env.AWS_PROFILE = 'ghost-phase2';
+console.error('[boot] credential_process profile written');
 
 // One shared, explicitly-instantiated credential provider for every client
 // this file constructs itself, instead of leaving each on the SDK's default
@@ -57,6 +58,7 @@ process.env.AWS_PROFILE = 'ghost-phase2';
 const sharedCredentials = fromIni({ profile: 'ghost-phase2', configFilepath: awsConfigPath });
 
 const objectStore = createS3ObjectStore({ bucket, client: new S3Client({ region, credentials: sharedCredentials }) });
+console.error('[boot] S3Client constructed, object store created');
 
 // Ghost's ecosystem does string-based client-type detection in several
 // places (Ghost core's connection.js, knex-migrator's database.js, and
@@ -74,6 +76,7 @@ for (const dbInfoPath of findDatabaseInfoPaths(ghostCheckoutDir)) {
     console.error(`[ghost-sqlite-s3-launcher] could not patch ${dbInfoPath}:`, err.message);
   }
 }
+console.error('[boot] database-info patching loop finished');
 
 const s3Config = {
   manifestStore: createManifestStore(objectStore),
@@ -88,9 +91,11 @@ const s3Config = {
 // hosts construct additional Knex clients from an independently re-derived
 // config copy that doesn't reliably carry nested function-valued objects.
 registerS3Config(s3Config);
+console.error('[boot] registerS3Config done');
 
 const configModule = await import(path.join(ghostCoreDir, 'core/shared/config/index.js'));
 const config = configModule.default ?? configModule;
+console.error('[boot] Ghost core config module imported');
 
 config.set('database:client', SqliteS3Client);
 config.set('database:useNullAsDefault', true);
@@ -98,23 +103,30 @@ config.set('database:connection', {
   filename: path.join(dataDir, 'ghost.db'),
   s3: s3Config,
 });
+console.error('[boot] database:client/useNullAsDefault/connection config set');
 
 const mailParamName = process.env.MAIL_SSM_PARAM_NAME ?? 'ghost_imap_token';
 const ssm = new SSMClient({ region, credentials: sharedCredentials });
+console.error('[boot] about to send SSM GetParameterCommand');
 const mailParam = await ssm.send(new GetParameterCommand({ Name: mailParamName, WithDecryption: true }));
+console.error('[boot] SSM GetParameterCommand resolved');
 // The existing SSM parameter stores "user:password" as its value (see
 // phase1/jpjiy's mail-credential handling) — split on the first colon.
 const [mailUser, ...mailPassParts] = mailParam.Parameter.Value.split(':');
 config.set('mail', buildMailConfig({ user: mailUser, pass: mailPassParts.join(':') }));
+console.error('[boot] mail config set');
 
 const ghostUrl = process.env.GHOST_URL;
 if (!ghostUrl) {
   throw new Error('GHOST_URL must be set');
 }
 config.set('url', ghostUrl);
+console.error('[boot] url config set');
 
 config.set('storage:active', 'S3Storage');
 config.set(
   'storage:S3Storage',
   buildS3StorageConfig({ bucket, region, cdnUrl: `https://${bucket}.s3.${region}.amazonaws.com` })
 );
+console.error('[boot] storage config set');
+console.error('[boot] preload.mjs complete, handing off to index.js');
