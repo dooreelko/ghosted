@@ -2,15 +2,28 @@ services:
   ghost-sqlite-s3:
     image: node:22.23.1-bookworm-slim
     working_dir: /app/Ghost/ghost/core
+    # better-sqlite3's prebuilt binary is host-linked (host node_modules is
+    # bind-mounted in) and won't load under the container's own glibc/Node
+    # ABI. node_modules/better-sqlite3 is overlaid with a container-local
+    # volume (so this never touches the host's working copy of the same
+    # node_modules), seeded from a second read-only mount of the repo, then
+    # rebuilt from source against the container's own toolchain before
+    # Ghost boots.
     command:
-      - node
-      - --conditions=source
-      - --import=tsx
-      - --import=/app/phase2/packages/sqlite-s3/smoke/preload.mjs
-      - index.js
+      - bash
+      - -c
+      - >-
+        apt-get update -qq &&
+        apt-get install -y -qq python3 make g++ > /dev/null &&
+        cp -a /app-ro/phase2/packages/sqlite-s3/node_modules/better-sqlite3/. /app/phase2/packages/sqlite-s3/node_modules/better-sqlite3/ &&
+        (cd /app/phase2/packages/sqlite-s3/node_modules/better-sqlite3 && rm -rf build && npm run build-release) &&
+        cd /app/Ghost/ghost/core &&
+        exec node --conditions=source --import=tsx --import=/app/phase2/packages/sqlite-s3/smoke/preload.mjs index.js
     volumes:
       - ../../../../:/app
+      - ../../../../:/app-ro:ro
       - ${HOME}/.aws:/root/.aws:ro
+      - sqlite3_module:/app/phase2/packages/sqlite-s3/node_modules/better-sqlite3
     environment:
       NODE_ENV: development
       AWS_PROFILE: default
@@ -19,3 +32,6 @@ services:
       SQLITE_S3_REGION: "${SQLITE_S3_REGION:?set to the bucket's region}"
     ports:
       - "2368:2368"
+
+volumes:
+  sqlite3_module:

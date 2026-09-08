@@ -131,3 +131,42 @@ ahead of the smoke test, as the unattended-safe verification step; the
 smoke test remains the attended-only, bimodal step after it. Ran it
 standalone against real AWS this session: 2/2 scenarios passed, its
 bucket self-cleaned (confirmed via `aws s3 ls`).
+
+
+**Smoke-test debugging, live — real progress, not yet green**: pushed
+through several layers of pre-existing (not sqlite-s3-specific)
+environment gaps this session while trying to get a full smoke-test
+pass:
+- `better-sqlite3`'s prebuilt binary is host-linked (host `node_modules`
+  is bind-mounted into the smoke container) and won't load under the
+  container's own glibc/Node ABI at all — neither `bookworm-slim` nor
+  `trixie-slim` base images matched. Fixed by rebuilding it from source
+  inside the container, in a container-local Docker volume overlaid
+  onto `node_modules/better-sqlite3` (seeded from a second read-only
+  mount of the repo) so the host's own working copy is never touched.
+  This got a real Ghost boot writing real segments to S3 for the first
+  time.
+- The Ghost checkout's frontend assets (`cards.manifest.json` etc.)
+  had never been built (`pnpm build:assets` in `Ghost/ghost/core`) —
+  unrelated to sqlite-s3, just a checkout that was never fully set up
+  for a from-source run. Built once; noted as a prerequisite at the top
+  of `run-smoke-test.sh`.
+- Ghost's HTTP server starts accepting connections and returns 200
+  before its DB-ready sequence (S3 restore + migrations, ~60-100s+ on
+  this client) finishes, so the original wait-loop + one-shot Admin API
+  calls raced it. `run-smoke-test.sh`'s Admin API calls now use
+  `curl --retry ... --retry-all-errors --retry-connrefused` to ride out
+  that gap instead of a fixed wait.
+- Remaining, not resolved this session: the DB-ready sequence itself is
+  flaky under this environment — same fresh bucket, same code, one run
+  reached "Database ready in 98s" and booted fully, another instead hit
+  `KnexTimeoutError: Timeout acquiring a connection` at the ~2-minute
+  mark (single-connection pool per this client's design, contended
+  between Ghost boot's own connection and knex-migrator's readiness
+  probe) and Ghost exited. Root cause not chased down — every throwaway
+  bucket/container from each attempt was cleaned up by hand.
+
+Net: the automated Admin API post-creation flow (setup → session →
+create post, described above) is written and exercised as far as
+Ghost's boot sequence allows, but a full green smoke-test run wasn't
+achieved this session — separate from the automation itself.
