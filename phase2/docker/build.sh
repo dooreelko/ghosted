@@ -21,3 +21,16 @@ docker build -f "$REPO_ROOT/phase2/docker/Dockerfile" --build-arg BASE_IMAGE="$B
 
 echo "== Built $FINAL_TAG =="
 echo "$FINAL_TAG"
+
+ECR_URL="$(nix-shell -p opentofu --run "cd $REPO_ROOT/phase2/iac && tofu output -raw ecr_repository_url")"
+ECR_TAG="$ECR_URL:$SHA"
+
+echo "== Authenticating docker to ECR =="
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "${ECR_URL%%/*}"
+
+echo "== Tagging and pushing $ECR_TAG =="
+docker tag "$FINAL_TAG" "$ECR_TAG"
+docker push "$ECR_TAG"
+
+echo "== Pushed $ECR_TAG =="
+echo "$ECR_TAG"
