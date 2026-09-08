@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GHOST_DIR="$REPO_ROOT/Ghost"
 SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 
-if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain --ignore-submodules)" ]; then
   echo "ERROR: refusing to build from a dirty tree -- the resulting image tag would not uniquely identify its contents" >&2
   exit 1
 fi
