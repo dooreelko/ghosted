@@ -46,7 +46,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
   }
 
   async acquireRawConnection() {
-    const { manifest } = await this._s3.manifestStore.read();
+    const { manifest, etag } = await this._s3.manifestStore.read();
     this._manifest = manifest;
     await restoreLocalDb({
       manifest,
@@ -79,7 +79,12 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // already-consistent `.db` file directly — so there is never a restored
     // WAL to account for: capture progress always starts fresh here, exactly
     // as it does for a brand-new database.
-    connection.__sqliteS3State = { lastWalOffset: 0, pageSize: null };
+    // `baseline` is the {manifest, etag} this connection's local db was just
+    // restored from -- commitWalDelta's optimistic-concurrency check is only
+    // meaningful against this, never against a fresh read taken at commit
+    // time (a fresh read would almost always match what was just written,
+    // silently defeating the overlap check on the fast/no-conflict path).
+    connection.__sqliteS3State = { lastWalOffset: 0, pageSize: null, baseline: { manifest, etag } };
     return connection;
   }
 
@@ -115,7 +120,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // back to a fresh shape defensively (shouldn't normally happen, since
     // acquireRawConnection always sets this) rather than propagating
     // undefined into arithmetic (undefined - number = NaN => Buffer.alloc(NaN)).
-    const state = connection.__sqliteS3State ?? { lastWalOffset: 0, pageSize: null };
+    const state = connection.__sqliteS3State ?? { lastWalOffset: 0, pageSize: null, baseline: { manifest: null, etag: null } };
     const lastWalOffset = state.lastWalOffset ?? 0;
     if (size <= lastWalOffset) return;
 
@@ -167,7 +172,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
       manifestStore: s3.manifestStore,
       segmentStore: s3.segmentStore,
     });
-    const outcome = await committer.commitWalDelta(payload, frames, pageSize);
+    const outcome = await committer.commitWalDelta(payload, frames, pageSize, state.baseline);
 
     if (outcome.retryTransaction) {
       // By this point the write has already committed locally — there is no
@@ -199,6 +204,10 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // frames) are not yet considered captured.
     state.pageSize = pageSize;
     state.lastWalOffset = lastWalOffset + trimEnd;
+    // This commit's own segment is now durably part of the shared history --
+    // the next capture on this connection must treat it (and everything it
+    // was appended onto) as the new known-synced baseline.
+    state.baseline = { manifest: outcome.manifest, etag: outcome.etag };
     connection.__sqliteS3State = state;
     s3.checkpointPolicy.recordSegment(payload.length);
 

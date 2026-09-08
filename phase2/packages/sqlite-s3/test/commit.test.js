@@ -6,6 +6,7 @@ import { createManifestStore } from '../src/manifest.js';
 import { createCommitter } from '../src/commit.js';
 
 const PAGE_SIZE = 4096;
+const EMPTY_BASELINE = { manifest: null, etag: null };
 
 function setup() {
   const store = createInMemoryObjectStore();
@@ -18,7 +19,7 @@ function setup() {
 test('first commit ever writes a manifest with baseSegmentId null and records pageSize', async () => {
   const { committer, manifestStore } = setup();
   const frames = [{ pageNumber: 1, dbSizeAfterCommit: 1 }];
-  const result = await committer.commitWalDelta(Buffer.from('delta-1'), frames, PAGE_SIZE);
+  const result = await committer.commitWalDelta(Buffer.from('delta-1'), frames, PAGE_SIZE, EMPTY_BASELINE);
   assert.ok(result.segmentId);
   const { manifest } = await manifestStore.read();
   assert.equal(manifest.baseSegmentId, null);
@@ -28,40 +29,54 @@ test('first commit ever writes a manifest with baseSegmentId null and records pa
 
 test('pageSize is carried forward unchanged on later commits', async () => {
   const { committer, manifestStore } = setup();
-  await committer.commitWalDelta(Buffer.from('a'), [{ pageNumber: 1, dbSizeAfterCommit: 1 }], PAGE_SIZE);
-  await committer.commitWalDelta(Buffer.from('b'), [{ pageNumber: 2, dbSizeAfterCommit: 2 }], PAGE_SIZE);
+  const resultA = await committer.commitWalDelta(
+    Buffer.from('a'),
+    [{ pageNumber: 1, dbSizeAfterCommit: 1 }],
+    PAGE_SIZE,
+    EMPTY_BASELINE
+  );
+  await committer.commitWalDelta(
+    Buffer.from('b'),
+    [{ pageNumber: 2, dbSizeAfterCommit: 2 }],
+    PAGE_SIZE,
+    { manifest: resultA.manifest, etag: resultA.etag }
+  );
   const { manifest } = await manifestStore.read();
   assert.equal(manifest.pageSize, PAGE_SIZE);
 });
 
 test('segment meta records dbSizeAfterCommit from the last frame', async () => {
-  const { committer, manifestStore, segmentStore } = setup();
+  const { committer, segmentStore } = setup();
   const frames = [
     { pageNumber: 1, dbSizeAfterCommit: 0 },
     { pageNumber: 2, dbSizeAfterCommit: 7 },
   ];
-  const result = await committer.commitWalDelta(Buffer.from('delta'), frames, PAGE_SIZE);
+  const result = await committer.commitWalDelta(Buffer.from('delta'), frames, PAGE_SIZE, EMPTY_BASELINE);
   const seg = await segmentStore.getSegment(result.segmentId);
   assert.equal(seg.meta.dbSizeAfterCommit, 7);
   assert.deepEqual(seg.meta.writeSet, [1, 2]);
 });
 
-test('pageSize self-heals on the next commit if the read manifest is missing it (I-B)', async () => {
+test('pageSize self-heals on the next commit if the baseline manifest is missing it (I-B)', async () => {
   const { committer, manifestStore, segmentStore } = setup();
-  await committer.commitWalDelta(Buffer.from('a'), [{ pageNumber: 1, dbSizeAfterCommit: 1 }], PAGE_SIZE);
+  const resultA = await committer.commitWalDelta(
+    Buffer.from('a'),
+    [{ pageNumber: 1, dbSizeAfterCommit: 1 }],
+    PAGE_SIZE,
+    EMPTY_BASELINE
+  );
 
-  // Simulate a manifest that lost its pageSize field (old-format manifest, or
-  // an unrelated bug) — reading it back should not propagate `undefined`
-  // forever; the next commit must fall back to its own passed-in pageSize.
-  const brokenManifestStore = {
-    async read() {
-      const { manifest, etag } = await manifestStore.read();
-      return { manifest: { ...manifest, pageSize: undefined }, etag };
-    },
-    write: manifestStore.write.bind(manifestStore),
-  };
-  const healingCommitter = createCommitter({ manifestStore: brokenManifestStore, segmentStore, sleep: async () => {} });
-  await healingCommitter.commitWalDelta(Buffer.from('b'), [{ pageNumber: 2, dbSizeAfterCommit: 2 }], PAGE_SIZE);
+  // Simulate a stale/old-format baseline manifest missing pageSize (e.g. a
+  // caller that restored from an older manifest shape) -- the next commit
+  // must fall back to its own passed-in pageSize rather than propagating
+  // `undefined` forever.
+  const healingCommitter = createCommitter({ manifestStore, segmentStore, sleep: async () => {} });
+  await healingCommitter.commitWalDelta(
+    Buffer.from('b'),
+    [{ pageNumber: 2, dbSizeAfterCommit: 2 }],
+    PAGE_SIZE,
+    { manifest: { ...resultA.manifest, pageSize: undefined }, etag: resultA.etag }
+  );
 
   const { manifest } = await manifestStore.read();
   assert.equal(manifest.pageSize, PAGE_SIZE);
@@ -69,14 +84,24 @@ test('pageSize self-heals on the next commit if the read manifest is missing it 
 
 test('two non-overlapping commits both land (second rebases automatically)', async () => {
   const { committer, manifestStore } = setup();
-  // Writer A reads manifest version 0, then commits touching page 1.
-  const resultA = await committer.commitWalDelta(Buffer.from('a'), [{ pageNumber: 1, dbSizeAfterCommit: 1 }], PAGE_SIZE);
-  // Writer B, unaware of A, also started from version 0 and commits touching page 2.
-  // Simulate this by calling commitWalDelta again without B having "seen" A's write —
-  // commitWalDelta always re-reads the manifest internally, so this models B racing in
-  // right after A landed: B's local transaction was built against the pre-A base, but
-  // since B's write-set (page 2) doesn't overlap A's (page 1), it must still land.
-  const resultB = await committer.commitWalDelta(Buffer.from('b'), [{ pageNumber: 2, dbSizeAfterCommit: 2 }], PAGE_SIZE);
+  // Writer A and writer B both start from the same empty baseline, unaware
+  // of each other. A lands first.
+  const resultA = await committer.commitWalDelta(
+    Buffer.from('a'),
+    [{ pageNumber: 1, dbSizeAfterCommit: 1 }],
+    PAGE_SIZE,
+    EMPTY_BASELINE
+  );
+  // B's local db was built against that SAME pre-A baseline (it never saw
+  // A's commit) -- passing EMPTY_BASELINE again models that honestly. B's
+  // write-set (page 2) doesn't overlap A's (page 1), so it must still land,
+  // rebased onto A's segment.
+  const resultB = await committer.commitWalDelta(
+    Buffer.from('b'),
+    [{ pageNumber: 2, dbSizeAfterCommit: 2 }],
+    PAGE_SIZE,
+    EMPTY_BASELINE
+  );
   assert.ok(resultB.segmentId);
   const { manifest } = await manifestStore.read();
   assert.deepEqual(manifest.walSegmentIds, [resultA.segmentId, resultB.segmentId]);
@@ -84,23 +109,17 @@ test('two non-overlapping commits both land (second rebases automatically)', asy
 
 test('overlapping commit is reported as a required retry, not silently merged', async () => {
   const { committer, manifestStore, segmentStore } = setup();
-  await committer.commitWalDelta(Buffer.from('a'), [{ pageNumber: 5, dbSizeAfterCommit: 5 }], PAGE_SIZE);
-  // Force a stale read: manually give the committer an outdated manifest snapshot by
-  // racing a manifest write in between read and write via a wrapped manifestStore.
-  const staleManifestStore = {
-    async read() {
-      // Return the pre-A state even though the store already has A's commit —
-      // this simulates writer B having snapshotted before A landed.
-      return { manifest: { baseSegmentId: null, walSegmentIds: [], pageSize: PAGE_SIZE }, etag: null };
-    },
-    write: manifestStore.write.bind(manifestStore),
-  };
-  const staleCommitter = createCommitter({
-    manifestStore: staleManifestStore,
-    segmentStore,
-    sleep: async () => {},
-  });
-  const result = await staleCommitter.commitWalDelta(Buffer.from('b'), [{ pageNumber: 5, dbSizeAfterCommit: 5 }], PAGE_SIZE);
+  await committer.commitWalDelta(Buffer.from('a'), [{ pageNumber: 5, dbSizeAfterCommit: 5 }], PAGE_SIZE, EMPTY_BASELINE);
+  // Writer B's local db was built against the pre-A baseline -- it doesn't
+  // know A already landed -- and B also touches page 5, so its stale page
+  // image must not be allowed to silently overwrite A's.
+  const staleCommitter = createCommitter({ manifestStore, segmentStore, sleep: async () => {} });
+  const result = await staleCommitter.commitWalDelta(
+    Buffer.from('b'),
+    [{ pageNumber: 5, dbSizeAfterCommit: 5 }],
+    PAGE_SIZE,
+    EMPTY_BASELINE
+  );
   assert.deepEqual(result, { retryTransaction: true });
 });
 
@@ -116,14 +135,14 @@ test('overlapping commit is reported as a required retry, not silently merged', 
 // directly conflicts with A's write-set. That would let A's stale-based
 // commit land, silently overwriting B's already-committed data.
 test('a checkpoint that folds a conflicting writer\'s segment into a new base is still detected as a conflict (C1)', async () => {
-  const { manifestStore, segmentStore } = setup();
+  const { segmentStore } = setup();
 
-  // Writer A's snapshot, taken BEFORE the checkpoint: some pre-existing
+  // Writer A's baseline, taken BEFORE the checkpoint: some pre-existing
   // history that A believes is current.
   const priorWalIds = ['seg-pre-1', 'seg-pre-2'];
   const priorManifest = { baseSegmentId: 'base-old', walSegmentIds: priorWalIds, pageSize: PAGE_SIZE };
 
-  // Between A's snapshot and A's CAS attempt: (1) writer B commits a segment
+  // Between A's baseline and A's CAS attempt: (1) writer B commits a segment
   // touching page 5 (the same page A is about to write), and (2) a
   // checkpoint folds B's segment (and everything else) into a brand new
   // base, resetting walSegmentIds to [] and changing baseSegmentId. From
@@ -142,12 +161,10 @@ test('a checkpoint that folds a conflicting writer\'s segment into a new base is
 
   let writeAttempts = 0;
   const staleManifestStore = {
-    async read() {
-      return { manifest: priorManifest, etag: 'etag-old' };
-    },
     async write(nextManifest, { expectedEtag }) {
       writeAttempts += 1;
       if (writeAttempts === 1) {
+        assert.equal(expectedEtag, 'etag-old');
         // A's first CAS attempt conflicts -- the manifest has already moved
         // on to the post-checkpoint state by the time A tries to write.
         const err = new Error('manifest changed since last read');
@@ -168,7 +185,12 @@ test('a checkpoint that folds a conflicting writer\'s segment into a new base is
   const committer = createCommitter({ manifestStore: staleManifestStore, segmentStore, sleep: async () => {} });
   // Writer A's write-set overlaps page 5, which is the page B's
   // (now-folded-into-base) segment touched.
-  const result = await committer.commitWalDelta(Buffer.from('a-writes-page-5'), [{ pageNumber: 5, dbSizeAfterCommit: 5 }], PAGE_SIZE);
+  const result = await committer.commitWalDelta(
+    Buffer.from('a-writes-page-5'),
+    [{ pageNumber: 5, dbSizeAfterCommit: 5 }],
+    PAGE_SIZE,
+    { manifest: priorManifest, etag: 'etag-old' }
+  );
   // The fixed logic must recognize that the base changed underneath A and
   // force a full transaction retry -- NOT silently accept a second CAS
   // write as if it were a safe, non-overlapping rebase.
@@ -180,7 +202,6 @@ test('gives up after 10 attempts if every retry keeps conflicting', async () => 
   const { manifestStore, segmentStore } = setup();
   await manifestStore.write({ baseSegmentId: null, walSegmentIds: [], pageSize: PAGE_SIZE }, { expectedEtag: null });
   const alwaysStaleStore = {
-    read: async () => ({ manifest: { baseSegmentId: null, walSegmentIds: [], pageSize: PAGE_SIZE }, etag: null }),
     write: async () => {
       // Every write conflicts because someone else always beats us with an overlapping page.
       const seg = await segmentStore.putSegment(Buffer.from('other'), { writeSet: [99], dbSizeAfterCommit: 99 });
@@ -200,7 +221,11 @@ test('gives up after 10 attempts if every retry keeps conflicting', async () => 
   };
   const flakyCommitter = createCommitter({ manifestStore: alwaysStaleStore, segmentStore, sleep: async () => {} });
   await assert.rejects(
-    () => flakyCommitter.commitWalDelta(Buffer.from('mine'), [{ pageNumber: 5, dbSizeAfterCommit: 5 }], PAGE_SIZE),
+    () =>
+      flakyCommitter.commitWalDelta(Buffer.from('mine'), [{ pageNumber: 5, dbSizeAfterCommit: 5 }], PAGE_SIZE, {
+        manifest: { baseSegmentId: null, walSegmentIds: [], pageSize: PAGE_SIZE },
+        etag: null,
+      }),
     /max retries/
   );
 });

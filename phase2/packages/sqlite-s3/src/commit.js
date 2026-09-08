@@ -9,10 +9,19 @@ export function fullJitterDelay(attempt, baseMs = 50, capMs = 2000) {
 
 export function createCommitter({ manifestStore, segmentStore, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   return {
-    async commitWalDelta(payloadBytes, frames, pageSize) {
+    // `baseline` is the {manifest, etag} the caller's LOCAL db was actually
+    // built from (its last restore, or its own previous successful commit)
+    // -- never a fresh read taken here. Reading fresh right before the CAS
+    // attempt would make the optimistic-concurrency check nearly a no-op:
+    // it would almost always match what we just read, even though the
+    // caller's local page image was captured against much older state, so
+    // a conflicting writer's already-landed segment could go undetected
+    // and get silently clobbered by this commit's stale page image.
+    async commitWalDelta(payloadBytes, frames, pageSize, baseline) {
       const writeSet = writeSetFromFrames(frames);
       const dbSizeAfterCommit = frames[frames.length - 1]?.dbSizeAfterCommit ?? 0;
-      let { manifest, etag } = await manifestStore.read();
+      let manifest = baseline.manifest;
+      let etag = baseline.etag;
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
         const segmentId = await segmentStore.putSegment(payloadBytes, { writeSet, dbSizeAfterCommit });
@@ -23,7 +32,7 @@ export function createCommitter({ manifestStore, segmentStore, sleep = (ms) => n
         };
         try {
           const result = await manifestStore.write(nextManifest, { expectedEtag: etag });
-          return { segmentId, etag: result.etag };
+          return { segmentId, etag: result.etag, manifest: nextManifest };
         } catch (err) {
           if (err.name !== 'ManifestConflictError') throw err;
 

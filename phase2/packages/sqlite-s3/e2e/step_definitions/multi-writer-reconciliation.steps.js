@@ -117,7 +117,8 @@ Then('all {int} rows are present, one per \\(writer, sequence\\) pair, with none
 
   for (let writer = 0; writer < this.writerCount; writer += 1) {
     for (let seq = 0; seq < this.rowsPerWriter; seq += 1) {
-      assert.ok(seen.has(`${writer}:${seq}`), `writer ${writer}'s row seq ${seq} is missing — a commit was silently lost`);
+      const key = `${writer}:${seq}`;
+      assert.ok(seen.has(key), `writer ${writer}'s row seq ${seq} is missing — a commit was silently lost`);
     }
   }
 });
