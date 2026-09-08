@@ -1,3 +1,6 @@
+ID: hnj9a | Severity: med | Status: doing
+Title: Docker Iac
+---
 this is a subtask of hi3zi
 
 adapt docker images to our needs and create iac for lightsail & co under ./phase2/iac/
@@ -82,3 +85,55 @@ both fixed in the design doc:
   `cdnUrl` points at the bucket directly since nothing fronts it
   publicly yet (no CDN — that's i8hlt's cutover work) — uploads work,
   public image URLs won't resolve until then.
+
+
+## Deployed live (2026-09-08)
+
+Infra applied for real (S3, ECR, IAM roles, Lightsail Container Service),
+image built two-stage and pushed, deployment is live and healthy on the
+`micro` power tier: `https://ghost-phase2.jp85rg6tx0tz6.us-east-1.cs.amazonlightsail.com/blog/`
+serves real Ghost, backed by S3 SQLite, over an AssumeRole'd runtime
+identity. No CloudFront/DNS pointed at it yet (matches this ticket's
+scope) — reachable only via its own Lightsail URL.
+
+Getting the deployment to actually pass Lightsail's health check and go
+live took substantially longer than expected — several real, unrelated
+bugs stacked on top of each other, each masking the next once fixed:
+
+- A missing `main` field in the sqlite-s3 package's `package.json` (import
+  never worked at all).
+- The AssumeRole credential helper missing an explicit AWS region.
+- `better-sqlite3`'s native binary built on the host being glibc-incompatible
+  with the container's runtime base image — fixed by rebuilding it from
+  source inside the Dockerfile, not on the host.
+- A credential self-recursion bug: the AssumeRole helper script inherited
+  the same AWS profile env vars that point back at itself, so credential
+  resolution recursed into itself indefinitely under real AWS conditions
+  (never showed up in any local test, since locally there's no fallback
+  identity to recurse past into).
+- The app's IAM trust policy was pointed at the wrong of Lightsail's two
+  separate container-identity ARNs (the ECR-image-puller role's principal,
+  not the container's own runtime principal) — exactly the mistake this
+  ticket's design doc had already flagged as easy to make, made anyway,
+  caught via inspecting the actual provider schema rather than guessing.
+- Ghost's own default `server.host` is loopback-only; without an explicit
+  override the app boots and binds successfully but is completely
+  unreachable from outside the container.
+- **Final blocker, root cause of the persistent 503**: Lightsail's health
+  check was probing `/`, but `GHOST_URL` is configured as a `/blog`
+  subpath — Ghost's frontend 404s on bare `/` in that configuration, so
+  the health check failed forever regardless of how healthy or fast the
+  app actually was. Diagnosed by isolating variables directly: a dummy
+  nginx container on the same Lightsail service went healthy immediately
+  (ruling out any Lightsail/networking/ECR-puller plumbing issue), and a
+  local Docker repro of the exact deployed image, run under the real
+  config, reproduced `/` → 404 / `/blog/` → 200 directly. Fixed by
+  pointing the health check at `/blog/` instead of `/`.
+
+Power tier was bumped to `medium` mid-investigation to rule out a
+resource-sizing cause (it wasn't the cause) and has been reverted back to
+`micro`, which is what the live deployment now runs on.
+
+Everything above is now committed to `phase2/iac/` and `phase2/docker/`;
+the working image tag and exact resource identifiers are recorded in
+`.local-secrets.md` per this repo's sensitive-data convention.

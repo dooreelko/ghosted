@@ -35,8 +35,12 @@ resource "aws_lightsail_container_service_deployment_version" "ghost" {
       unhealthy_threshold = 5
       timeout_seconds     = 10
       interval_seconds    = 30
-      path                = "/"
-      success_codes       = "200-399"
+      # GHOST_URL is a "/blog" subpath (see environment above) -- Ghost's
+      # frontend 404s on bare "/" when configured this way (confirmed via
+      # local repro), so the health check must probe the same subpath Ghost
+      # actually serves, not the container root.
+      path          = "/blog/"
+      success_codes = "200-399"
     }
   }
 }

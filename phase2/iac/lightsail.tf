@@ -1,6 +1,6 @@
 resource "aws_lightsail_container_service" "ghost" {
   name        = "ghost-phase2"
-  power       = "medium"
+  power       = "micro"
   scale       = 1
   is_disabled = false
 
