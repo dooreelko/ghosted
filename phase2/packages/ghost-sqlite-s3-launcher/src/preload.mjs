@@ -9,6 +9,7 @@ import {
   createS3ObjectStore,
   createCheckpointPolicy,
 } from '@ghost-phase2/sqlite-s3';
+import { findDatabaseInfoPaths, patchDatabaseInfoAt } from './database-info-patch.mjs';
 
 const ghostCheckoutDir = process.env.GHOST_CHECKOUT_DIR;
 const bucket = process.env.SQLITE_S3_BUCKET;
@@ -16,7 +17,7 @@ const region = process.env.SQLITE_S3_REGION;
 if (!ghostCheckoutDir || !bucket || !region) {
   throw new Error('GHOST_CHECKOUT_DIR, SQLITE_S3_BUCKET and SQLITE_S3_REGION must be set');
 }
-const ghostCoreDir = path.join(ghostCheckoutDir, 'ghost/core');
+const ghostCoreDir = ghostCheckoutDir; // GHOST_CHECKOUT_DIR now names the dir containing core/ directly
 
 const dataDir = process.env.SQLITE_S3_DATA_DIR ?? '/tmp/ghost-sqlite-s3';
 fs.mkdirSync(dataDir, { recursive: true });
@@ -32,24 +33,12 @@ const objectStore = createS3ObjectStore({ bucket, client: new S3Client({ region 
 // recognizes SqliteS3Client as SQLite-flavored. Multiple pnpm-resolved
 // versions can coexist in the workspace, so patch each one found.
 const require = (await import('node:module')).createRequire(import.meta.url);
-function patchDatabaseInfoAt(absolutePath) {
-  const DatabaseInfo = require(absolutePath);
-  const origIsSQLite = DatabaseInfo.isSQLite;
-  const origIsSQLiteConfig = DatabaseInfo.isSQLiteConfig;
-  DatabaseInfo.isSQLite = (knex) =>
-    knex.client.config.client === SqliteS3Client || origIsSQLite.call(DatabaseInfo, knex);
-  DatabaseInfo.isSQLiteConfig = (config) =>
-    config.client === SqliteS3Client || origIsSQLiteConfig.call(DatabaseInfo, config);
-}
-try {
-  const pnpmDir = path.resolve(ghostCheckoutDir, 'node_modules/.pnpm');
-  for (const entry of fs.readdirSync(pnpmDir)) {
-    if (entry.startsWith('@tryghost+database-info@')) {
-      patchDatabaseInfoAt(path.join(pnpmDir, entry, 'node_modules/@tryghost/database-info/index.js'));
-    }
+for (const dbInfoPath of findDatabaseInfoPaths(ghostCheckoutDir)) {
+  try {
+    patchDatabaseInfoAt(dbInfoPath, SqliteS3Client, require);
+  } catch (err) {
+    console.error(`[ghost-sqlite-s3-launcher] could not patch ${dbInfoPath}:`, err.message);
   }
-} catch (err) {
-  console.error('[ghost-sqlite-s3-launcher] could not patch @tryghost/database-info:', err.message);
 }
 
 const s3Config = {
