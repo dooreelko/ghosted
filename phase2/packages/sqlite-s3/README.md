@@ -116,6 +116,22 @@ For a real, end-to-end example against a live S3 bucket (creating a
 throwaway bucket, booting Ghost, verifying restart survival), see
 `smoke/`.
 
+### Running the multi-writer e2e suite
+
+Not run by default (`npm test` doesn't touch it) — it makes real AWS
+calls: creates a throwaway bucket, runs 3 concurrent writers against
+it, then empties and deletes the bucket at the end.
+
+```bash
+cd phase2/packages/sqlite-s3
+npm run test:e2e
+```
+
+Requires real AWS credentials in the environment (any chain the AWS SDK
+resolves) and permission to create/tag/delete S3 buckets; fails loudly
+if creds are missing rather than skipping. Set `SQLITE_S3_E2E_REGION`
+to change the region (defaults to `us-east-1`).
+
 ### Running the smoke test
 
 ```bash

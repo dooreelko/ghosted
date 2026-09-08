@@ -97,6 +97,23 @@ resource.
 6. Retry budget: up to 10 attempts, full-jitter backoff — matches the
    Python original's policy exactly, not reinvented.
 
+**Correction (found via the e2e multi-writer suite, see below):** step 3
+says the conditional PUT is "conditioned on the manifest's ETag still
+matching what it read at step 1" — the first implementation instead had
+the committer re-read the manifest fresh, internally, immediately before
+each CAS attempt. Since that read and the following write happen back to
+back with no writer-visible gap, the CAS almost always succeeded on the
+very first try even when the writer's local page image (built from its
+step-1 snapshot, well before this call) was already stale — silently
+overwriting another writer's already-landed page with an outdated image,
+with no conflict ever raised to trigger the overlap check at all. Fixed
+by threading the writer's actual step-1 `{manifest, etag}` baseline
+through explicitly (captured at restore/connection-acquire time, updated
+after each of the writer's own successful commits) instead of letting
+the committer read its own baseline. This restores the property the
+overlap/rebase logic always assumed it had: the CAS conflicts exactly
+when something the writer doesn't yet know about has landed.
+
 ## Checkpointing
 
 A new base segment is created when *either* condition is met:
@@ -265,6 +282,23 @@ itself rather than relying on the caller to configure it correctly.
   round-trip); a basic concurrent-writer conflict scenario (two writers
   committing overlapping pages) exercises the rebase/retry path if
   feasible to simulate locally.
+
+## Multi-writer e2e suite
+
+A Cucumber suite (`phase2/packages/sqlite-s3/e2e/`, `npm run test:e2e`,
+not run by default — it makes real AWS calls) proves the actual claim
+this design rests on, against a real bucket rather than the in-memory
+object store the unit tests use: 3 concurrent standalone Knex clients
+(real `SqliteS3Client`, no Ghost) each insert 8 rows through
+reconciling transactions into a shared table, then a brand-new client
+with no local state confirms it sees all 24. Two scenarios share one
+bucket for the run (created once via a feature-level `BeforeAll`, torn
+down via `AfterAll`) so the second scenario genuinely bootstraps from
+the database the first left behind, rather than from a fresh table it
+created itself. This suite is what caught the CAS-baseline bug
+described in the Commit path section above — it was invisible to the
+unit tests because the in-memory object store's read/write round-trip
+is fast enough that the bug's race window barely ever got exercised.
 
 ## Known limitations (accepted, tracked as follow-ups)
 
