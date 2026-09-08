@@ -123,6 +123,16 @@ if (!ghostUrl) {
 config.set('url', ghostUrl);
 console.error('[boot] url config set');
 
+// Ghost's default server.host (core/shared/config/defaults.json) is
+// 127.0.0.1 -- loopback-only. Lightsail's health check and all real
+// traffic reach the container from outside its network namespace via the
+// exposed port, so without this override Ghost boots and listens
+// successfully but is completely unreachable from outside the container
+// (same class of issue phase1/jpjiy hit and fixed for CloudFront's VPC
+// origin reaching that deployment's Ghost process).
+config.set('server:host', '0.0.0.0');
+console.error('[boot] server:host config set to 0.0.0.0');
+
 config.set('storage:active', 'S3Storage');
 config.set(
   'storage:S3Storage',
