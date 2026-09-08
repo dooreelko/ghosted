@@ -110,6 +110,23 @@ mail-wiring regressions would have to be caught by a human noticing a
 real failure (e.g. a comment-notification email never arriving), not by
 this pipeline.
 
+### Correction (pre-implementation): image cleanup can't go through the Admin API
+
+Ghost's Admin API has no image-delete endpoint (`images.js` only exposes
+`upload`, confirmed by reading Ghost's own endpoint controller) — "delete
+both" in step 4 is not literally achievable via the Admin API alone.
+Resolved: the post is deleted via the Admin API as planned; the test
+image is deleted as a direct S3 `DeleteObject` call, using `deploy.sh`'s
+own AWS identity (the same one already used for ECR login / SSM reads),
+against the key derived from the URL the upload response returns (the
+bucket is `SQLITE_S3_BUCKET`, already known to the deploy script). No new
+IAM permission needed beyond what an operator's AWS identity already has.
+- Rejected: leaving the test image in S3 permanently — would accumulate
+  one object per deploy run indefinitely.
+- Rejected: adding an image-delete capability to Ghost itself — would
+  violate the "never patch Ghost for this" principle for a
+  verification-only need.
+
 ## Error handling
 
 - Every step's failure is reported with enough detail to diagnose
