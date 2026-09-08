@@ -1,6 +1,14 @@
-# Confirmed at apply time (Task 10) via `tofu providers schema -json`:
-# aws_lightsail_container_service.private_registry_access[0].ecr_image_puller_role[0]
-# exposes `principal_arn` as a real computed string attribute. Referenced directly below.
+# aws_lightsail_container_service exposes TWO distinct principal_arn values —
+# don't conflate them:
+#   - private_registry_access[0].ecr_image_puller_role[0].principal_arn: only
+#     used by Lightsail's own image-pull mechanism (pulling from ECR).
+#   - the resource's own top-level `principal_arn`: the container's actual
+#     ambient runtime identity, i.e. what running application code presents
+#     when it calls AssumeRole. This is the one the trust policy needs.
+# Task 10 originally wired the ECR image-puller principal here by mistake
+# (confirmed via `tofu providers schema -json` at the time, but the wrong
+# attribute) -- every deployed container's AssumeRole call was denied until
+# this was corrected to the top-level principal_arn.
 data "aws_iam_policy_document" "app_runtime_trust" {
   statement {
     effect  = "Allow"
@@ -8,7 +16,7 @@ data "aws_iam_policy_document" "app_runtime_trust" {
 
     principals {
       type        = "AWS"
-      identifiers = [aws_lightsail_container_service.ghost.private_registry_access[0].ecr_image_puller_role[0].principal_arn]
+      identifiers = [aws_lightsail_container_service.ghost.principal_arn]
     }
   }
 }
