@@ -11,11 +11,11 @@ import path from 'node:path';
  * mechanism covers every client, including ones this codebase doesn't
  * construct itself (Ghost's own S3Storage adapter).
  */
-export function buildAwsConfigFile({ profileName, roleArn, helperScriptPath }) {
-  return `[profile ${profileName}]\ncredential_process = node ${helperScriptPath} ${roleArn}\n`;
+export function buildAwsConfigFile({ profileName, roleArn, helperScriptPath, region }) {
+  return `[profile ${profileName}]\ncredential_process = node ${helperScriptPath} ${roleArn} ${region}\n`;
 }
 
-export function writeCredentialProcessProfile({ configPath, profileName, roleArn, helperScriptPath }) {
+export function writeCredentialProcessProfile({ configPath, profileName, roleArn, helperScriptPath, region }) {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
-  fs.writeFileSync(configPath, buildAwsConfigFile({ profileName, roleArn, helperScriptPath }));
+  fs.writeFileSync(configPath, buildAwsConfigFile({ profileName, roleArn, helperScriptPath, region }));
 }

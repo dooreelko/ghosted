@@ -38,6 +38,7 @@ writeCredentialProcessProfile({
   profileName: 'ghost-phase2',
   roleArn,
   helperScriptPath,
+  region,
 });
 process.env.AWS_CONFIG_FILE = awsConfigPath;
 process.env.AWS_SDK_LOAD_CONFIG = '1';
