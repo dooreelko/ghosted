@@ -1,6 +1,9 @@
 ID: hnj9a | Severity: med | Status: doing
 Title: Docker Iac
 ---
+ID: hnj9a | Severity: med | Status: doing
+Title: Docker Iac
+---
 this is a subtask of hi3zi
 
 adapt docker images to our needs and create iac for lightsail & co under ./phase2/iac/
@@ -173,3 +176,17 @@ inspection. Current live deployment (`ad7450f`) is healthy on `micro`,
 verified clean.
 
 This ticket is complete.
+
+
+## Torn down (2026-09-08)
+
+Per explicit request, ran `tofu destroy` on `phase2/iac/` after confirming
+nothing (CloudFront/DNS) pointed real traffic at it. All 8 AWS resources
+(S3 bucket, ECR repo, IAM role/policy, Lightsail service, ECR repo
+policy) removed; verified gone via `tofu show` (empty state) and direct
+AWS lookups (404/NotFound on both the Lightsail service and the S3
+bucket). The branch's code (Dockerfile, launcher, IaC definitions, tests)
+is untouched — this only removed the live resources it had provisioned.
+Re-running `tofu apply` from this branch would recreate everything from
+scratch (a fresh bucket/DB, not the one that existed before — no data
+was preserved, matching that this was test infra with no real content).
