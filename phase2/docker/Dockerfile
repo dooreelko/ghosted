@@ -21,6 +21,7 @@ COPY --chown=nobody:nogroup phase2/packages/ghost-sqlite-s3-launcher /home/ghost
 RUN apt-get update -qq && \
     apt-get install -y -qq python3 make g++ > /dev/null && \
     cd /home/ghost/phase2-packages/sqlite-s3 && npm install --omit=dev && \
+    cd node_modules/better-sqlite3 && rm -rf build && npm run build-release && cd ../.. && \
     apt-get purge -y -qq python3 make g++ > /dev/null && \
     apt-get autoremove -y -qq > /dev/null && \
     rm -rf /var/lib/apt/lists/*
