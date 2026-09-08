@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { S3Client } from '@aws-sdk/client-s3';
+import { fromIni } from '@aws-sdk/credential-providers';
 import {
   SqliteS3Client,
   registerS3Config,
@@ -44,7 +45,18 @@ process.env.AWS_CONFIG_FILE = awsConfigPath;
 process.env.AWS_SDK_LOAD_CONFIG = '1';
 process.env.AWS_PROFILE = 'ghost-phase2';
 
-const objectStore = createS3ObjectStore({ bucket, client: new S3Client({ region }) });
+// One shared, explicitly-instantiated credential provider for every client
+// this file constructs itself, instead of leaving each on the SDK's default
+// chain (which would resolve — and cache — credentials independently per
+// client, each triggering its own credential_process subprocess spawn).
+// fromIni's result memoizes internally (respects the STS response's
+// Expiration), so passing this same instance to both clients below means
+// they share one cache: one spawn per token lifetime instead of two. Ghost's
+// own S3Storage adapter (constructed elsewhere, not by this file) still uses
+// the ambient default chain — that spawn is unavoidable.
+const sharedCredentials = fromIni({ profile: 'ghost-phase2', configFilepath: awsConfigPath });
+
+const objectStore = createS3ObjectStore({ bucket, client: new S3Client({ region, credentials: sharedCredentials }) });
 
 // Ghost's ecosystem does string-based client-type detection in several
 // places (Ghost core's connection.js, knex-migrator's database.js, and
@@ -88,7 +100,7 @@ config.set('database:connection', {
 });
 
 const mailParamName = process.env.MAIL_SSM_PARAM_NAME ?? 'ghost_imap_token';
-const ssm = new SSMClient({ region });
+const ssm = new SSMClient({ region, credentials: sharedCredentials });
 const mailParam = await ssm.send(new GetParameterCommand({ Name: mailParamName, WithDecryption: true }));
 // The existing SSM parameter stores "user:password" as its value (see
 // phase1/jpjiy's mail-credential handling) — split on the first colon.
