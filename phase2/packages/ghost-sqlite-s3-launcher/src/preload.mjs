@@ -12,6 +12,9 @@ import {
 } from '@ghost-phase2/sqlite-s3';
 import { findDatabaseInfoPaths, patchDatabaseInfoAt } from './database-info-patch.mjs';
 import { writeCredentialProcessProfile } from './aws-credentials.mjs';
+import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
+import { buildMailConfig } from './mail-config.mjs';
+import { buildS3StorageConfig } from './storage-config.mjs';
 
 const ghostCheckoutDir = process.env.GHOST_CHECKOUT_DIR;
 const bucket = process.env.SQLITE_S3_BUCKET;
@@ -82,3 +85,23 @@ config.set('database:connection', {
   filename: path.join(dataDir, 'ghost.db'),
   s3: s3Config,
 });
+
+const mailParamName = process.env.MAIL_SSM_PARAM_NAME ?? 'ghost_imap_token';
+const ssm = new SSMClient({ region });
+const mailParam = await ssm.send(new GetParameterCommand({ Name: mailParamName, WithDecryption: true }));
+// The existing SSM parameter stores "user:password" as its value (see
+// phase1/jpjiy's mail-credential handling) — split on the first colon.
+const [mailUser, ...mailPassParts] = mailParam.Parameter.Value.split(':');
+config.set('mail', buildMailConfig({ user: mailUser, pass: mailPassParts.join(':') }));
+
+const ghostUrl = process.env.GHOST_URL;
+if (!ghostUrl) {
+  throw new Error('GHOST_URL must be set');
+}
+config.set('url', ghostUrl);
+
+config.set('storage:active', 'S3Storage');
+config.set(
+  'storage:S3Storage',
+  buildS3StorageConfig({ bucket, region, cdnUrl: `https://${bucket}.s3.${region}.amazonaws.com` })
+);
