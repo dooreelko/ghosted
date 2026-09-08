@@ -1,5 +1,7 @@
 this is the wrap up task of hi3zi
 
+the goal is full automated cycle - get latest ghost, package, deploy, test, success or rollback.
+
 1. Migration/cutover — extending ssm-backup-instance.sh for content/images/, doing the actual one-time backup-and-restore into the new setup, and switching CloudFront's origin from the EC2 VPC-origin to Lightsail's public endpoint. This is real production work on live infra (a traffic cutover), distinct in kind from "build the image + IaC" (hnj9a) and "implement SQLite-over-S3" (vt4m9) — neither task's description touches it.
 2. Real-environment validation — vt4m9 only promises a local Docker smoke test. The credential path (AssumeRole against a live principalArn, the S3-backed SQLite actually working against a real S3 bucket, the SMTP-secret fetch) only exists once deployed to real Lightsail — local smoke testing won't catch it. Worth being explicit this isn't "done" until validated against the deployed thing, not just locally.
 3. Credential wiring is split across both tasks and could fall in the crack: hnj9a presumably creates the IAM role + trust policy (IaC), but the app-side AssumeRole call at container startup is really part of vt4m9's runtime code (it needs those temp creds to touch S3). Neither description mentions it explicitly — worth a one-line cross-reference in each so it doesn't get skipped as "the other task's problem."

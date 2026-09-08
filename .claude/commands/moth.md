@@ -16,3 +16,14 @@ never run `moth done`.
 never run `moth start`.
 
 you never decide when the task is done.
+
+# Moth-flavoured spec driven development
+
+It's essential to differentiate high-level specifications (tracked by moth) from during-the-implementation tasks and documents (e.g. used by superpowers skill).
+
+The difference is similar to one between software architecture and implementation. The former is abstract and changes rarely, while the latter is concrete and very in-the-moment. 
+
+The core of moth-flavoured spec driven method is to preserve the solution's essence so that, for example, two years from now one can take moth files and reimplement the solution by making all the implementation desisions fit for the new times and curcumstances.
+
+The goal of it is to liberate the implementer from context saturation. What matters is in moths, the rest can be deduced.
+
