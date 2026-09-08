@@ -14,19 +14,26 @@
 #   3. If phase2/packages/sqlite-s3 changed since the launcher's pinned git
 #      dependency ref, bump ghost-sqlite-s3-launcher/package.json to this
 #      repo's current HEAD commit and report that a commit is needed here.
-#   4. Create a random throwaway S3 bucket (unless SQLITE_S3_BUCKET is
+#   4. Run sqlite-s3's own e2e Cucumber suite (real S3, multi-writer
+#      reconciliation) — fully automated, manages its own throwaway
+#      bucket lifecycle. This is the unattended-safe verification; run
+#      first so a real regression is caught before touching Ghost/Docker.
+#   5. Create a random throwaway S3 bucket (unless SQLITE_S3_BUCKET is
 #      already set) and run the sqlite-s3 smoke test against fork_main +
-#      current sqlite-s3. Optimistic: just attempts it, so this step fails
-#      outright if AWS credentials aren't available — that's expected, not
-#      handled specially. On success, tears down the smoke containers and
-#      deletes the bucket (only if this script created it). On failure,
-#      leaves both in place for debugging — matches "stop and report,
-#      never auto-revert" above.
+#      current sqlite-s3. This part is the bimodal one: it has a manual
+#      "create a post" gate, so it only completes when run attended.
+#      Optimistic: just attempts it, so this step fails outright if AWS
+#      credentials aren't available, or if unattended — that's expected,
+#      not handled specially. On success, tears down the smoke containers
+#      and deletes the bucket (only if this script created it). On
+#      failure, leaves both in place for debugging — matches "stop and
+#      report, never auto-revert" above.
 #
 # Usage: scripts/sync-ghost.sh
 # Optional: SQLITE_S3_BUCKET, SQLITE_S3_REGION (default: a random
 # `sqlite-s3-smoke-<timestamp>-<random>` bucket in us-east-1). AWS
-# credentials for creating/using that bucket.
+# credentials for creating/using that bucket (both this and the e2e
+# suite's own bucket).
 
 set -euo pipefail
 
@@ -64,6 +71,9 @@ if [ "$CURRENT_REPO_SHA" != "$PINNED_SHA" ] \
 else
   echo "sqlite-s3 unchanged since $PINNED_SHA — nothing to bump"
 fi
+
+echo "== Running sqlite-s3 e2e suite (real S3, own throwaway bucket) =="
+npm --prefix "$SQLITE_S3_DIR" run test:e2e
 
 echo "== Running sqlite-s3 smoke test against fork_main (now checked out in $GHOST_DIR) =="
 export SQLITE_S3_REGION="${SQLITE_S3_REGION:-us-east-1}"

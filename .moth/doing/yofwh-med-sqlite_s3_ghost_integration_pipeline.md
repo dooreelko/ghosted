@@ -121,3 +121,13 @@ run (only when it created the bucket itself) — on failure both are
 left in place for debugging, per the existing "stop and report, never
 auto-revert" stance. The smoke test's manual post-creation step itself
 stays as-is (not automated) — out of scope for this ticket.
+
+
+**Sync script now also runs the e2e suite, live**: sqlite-s3's e2e
+Cucumber suite (`npm run test:e2e`) is fully automated — real S3, own
+throwaway bucket created/torn down inside its own hooks — unlike the
+smoke test's manual "create a post" gate. Added to `scripts/sync-ghost.sh`
+ahead of the smoke test, as the unattended-safe verification step; the
+smoke test remains the attended-only, bimodal step after it. Ran it
+standalone against real AWS this session: 2/2 scenarios passed, its
+bucket self-cleaned (confirmed via `aws s3 ls`).
