@@ -49,6 +49,45 @@ from ~$11-12/mo to ~$26/mo (see Cost comparison below). Exact integration
 shape (custom SQLite VFS vs. a Knex-layer shim vs. something else) will be
 decided then too.
 
+## Deploying
+
+One command, run manually (no CI/cron trigger): `phase2/scripts/deploy.sh`,
+from the repo root, with real AWS credentials for the account that owns
+`phase2/iac/`'s resources. It builds & pushes a new image (git short-SHA
+tag), applies it via OpenTofu, then independently verifies the live
+deployment (an HTTP smoke test plus a Ghost Admin API create/read/delete
+roundtrip that exercises the real SQLite-over-S3 write path and the
+S3-backed image-upload path) — see
+`docs/superpowers/specs/2026-09-08-phase2-deploy-observability-design.md`
+for why a second, independent check is needed on top of Lightsail's own
+health check, and the full failure-mode/rollback design.
+
+**Outcomes:**
+- Both `tofu apply` and verification succeed: the new tag is live, script
+  exits 0.
+- `tofu apply` itself fails (Lightsail rejects the new version): the
+  previous deployment is untouched and still serving; script reports and
+  exits non-zero, no rollback needed.
+- `tofu apply` succeeds but verification fails: script looks up the
+  previous deployment's tag from Lightsail's own history and redeploys it,
+  then exits non-zero reporting which tag ended up live.
+- First-ever deploy with no previous tag to fall back to, or a rollback
+  attempt that itself fails: script exits non-zero with an explicit
+  message — never guesses further, never auto-retries.
+
+**One-time setup, before the first deploy verification can pass:** a
+dedicated Ghost Admin API "Custom Integration" must be created manually
+through the live admin panel, and its `id:secret` stored as an SSM
+SecureString named `ghost_phase2_admin_api_key` (same pattern as the
+mail credential) — `deploy.sh` reads it with its own AWS identity, the
+container itself never receives it. See the design doc's "Admin API key
+provisioning" section for detail.
+
+**Not automated by this script:** mail delivery is not verified per-deploy
+(accepted gap, see design doc); the migration/cutover work (backup-and-
+restore, CloudFront origin switch) is separate, still-open scope (moth
+`i8hlt`), not part of `deploy.sh`.
+
 ## Cost (this design)
 
 **~$11-12/mo** — Lightsail Micro compute $10 (bundled load balancing +
