@@ -61,3 +61,24 @@ real mail), but no traffic cutover.** No CloudFront/DNS changes, no
 content/DB migration — matches hi3zi's split; moth i8hlt owns turning
 this into the live site and the automated deploy/rollback cycle around
 it.
+
+
+## Correction (2026-09-08, before plan-writing)
+
+Two gaps found reading Ghost's actual code before finalizing the plan,
+both fixed in the design doc:
+
+- **Credentials mechanism changed** from wrapping individual clients
+  (`fromTemporaryCredentials`) to a boot-time AWS `credential_process`
+  profile. Reason: Ghost's own `S3Storage` adapter (needed for image
+  storage, see next point) builds its own internal S3 client from
+  static credential strings, not a pluggable provider — our original
+  approach couldn't reach it, and resolving+hardcoding temp creds once
+  would go stale after ~1hr with no refresh.
+- **Image storage wiring was missing entirely** from the first design
+  pass, even though phase2/readme.md already decided images live in
+  the same bucket as the SQLite data. Added: launcher now also
+  configures Ghost's `S3Storage` adapter. Known limitation, accepted:
+  `cdnUrl` points at the bucket directly since nothing fronts it
+  publicly yet (no CDN — that's i8hlt's cutover work) — uploads work,
+  public image URLs won't resolve until then.

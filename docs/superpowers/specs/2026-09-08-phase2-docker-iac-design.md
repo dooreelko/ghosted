@@ -29,30 +29,71 @@ always will be by the time this runs), override `CMD` to
 needed here — production build is already compiled, unlike the smoke
 test's dev-mode invocation.
 
-## Launcher: two new responsibilities
+## Launcher: three new responsibilities
 
 `ghost-sqlite-s3-launcher`'s preload (previously DB-wiring only, per
-yofwh) grows two more jobs, in the same file/process — approved
-explicitly over splitting into separate preloads, since both need the
-same AssumeRole'd credentials and boot-time-config shape:
+yofwh) grows three more jobs, in the same file/process:
 
-**Credentials.** Lightsail auto-injects credentials for a role in an
-AWS-managed backend account with no access to our resources. Wrap the
-container's ambient default credential chain with
-`fromTemporaryCredentials({ params: { RoleArn: process.env.AWS_ROLE_ARN } })`
-from `@aws-sdk/credential-providers`, used to construct both the S3
-client and the SSM client below. This returns a credential *provider
-function* the SDK calls lazily per request — auto-refreshes near the
-~1hr expiry, no cron/entrypoint needed.
+**Credentials — corrected mid-design.** The original plan (wrap the
+container's ambient credentials with `fromTemporaryCredentials` from
+`@aws-sdk/credential-providers`, pass that provider into each client we
+construct) only covers clients *we* construct — it doesn't reach
+Ghost's own internally-constructed `S3Client` inside its `S3Storage`
+adapter (see Image storage below), which only accepts static
+`accessKeyId`/`secretAccessKey`/`sessionToken` strings or falls back to
+the ambient chain. Resolving the provider once at boot and handing
+S3Storage static strings would go stale after ~1hr with no refresh,
+silently breaking image uploads on a long-running site.
+
+Corrected approach: at the very top of the preload, before any other
+import touches AWS, write an AWS CLI `credential_process` profile
+(`~/.aws/config`, or `AWS_CONFIG_FILE` pointed at a container-local
+path) whose `credential_process` command is a small helper script
+(new file, `<launcher>/src/assume-role-credential-process.mjs`) that
+calls `sts:AssumeRole` using the container's own ambient default
+credentials and prints AWS CLI's standard JSON credential shape
+(`AccessKeyId`/`SecretAccessKey`/`SessionToken`/`Expiration`) to
+stdout. Set `AWS_SDK_LOAD_CONFIG=1` and `AWS_PROFILE` to that profile's
+name. Every S3/SSM client anyone constructs from that point on —
+sqlite-s3's own, S3Storage's internal one, our SSM read below —
+resolves credentials through the same ambient chain and independently
+re-invokes the helper script as its own cached token nears expiry. One
+mechanism, no per-client wiring, covers code we don't control the
+construction of.
 
 **Mail.** Fetch the existing Proton SMTP credential (SSM SecureString
 param, name defaults to `ghost_imap_token` — the same one phase1/jpjiy
-already uses; reused rather than duplicated) via the AssumeRole'd SSM
-client, set Ghost's `mail` config alongside the existing DB config.
+already uses; reused rather than duplicated), set Ghost's `mail` config
+alongside the existing DB config.
 
-New env vars: `AWS_ROLE_ARN`, `GHOST_URL` (real production url — wired
-now per explicit decision, see moth ticket), `MAIL_SSM_PARAM_NAME`
-(default `ghost_imap_token`).
+**Image storage — added, was missing from the first pass of this doc.**
+phase2/readme.md already decided images live in the same S3 bucket as
+the SQLite data; this preload is where that actually gets wired, via
+`config.set('storage', { active: 'S3Storage', S3Storage: {...} })`
+(Ghost's adapter-manager config shape — `active` names the adapter
+class, per-adapter config sits under a key matching that class name).
+Required `S3Storage` fields: `bucket` (same `SQLITE_S3_BUCKET`),
+`region` (same `SQLITE_S3_REGION`), `staticFileURLPrefix` (`content/images`,
+Ghost's own default), `cdnUrl`, `multipartUploadThresholdBytes`,
+`multipartChunkSizeBytes` (>= 5 MiB — use Ghost's own defaults, `zod`
+requires an integer but doesn't set one, need to check `ghost-storage-base`/
+Ghost's own default config for the conventional value at implementation
+time). No `accessKeyId`/`secretAccessKey` passed — S3Storage falls back
+to the ambient chain, which now resolves through the `credential_process`
+profile above.
+
+`cdnUrl` known limitation: nothing fronts this bucket publicly yet (no
+CloudFront — out of scope, see below), so `cdnUrl` is set to the
+bucket's own S3 URL even though the bucket itself stays private (no
+public bucket policy — it also holds DB segments/manifest, which must
+never be public). Uploaded image URLs will not actually resolve
+publicly until i8hlt fronts the bucket with a CDN as part of cutover.
+Uploads themselves still work and are recorded correctly in the DB.
+
+New env vars: `AWS_ROLE_ARN` (role the credential_process helper
+assumes), `GHOST_URL` (real production url — wired now per explicit
+decision, see moth ticket), `MAIL_SSM_PARAM_NAME` (default
+`ghost_imap_token`).
 
 ## IAM: two independent roles, don't conflate them
 
