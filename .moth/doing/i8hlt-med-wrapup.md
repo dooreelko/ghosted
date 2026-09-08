@@ -8,64 +8,117 @@ the goal is full automated cycle - get latest ghost, package, deploy, test, succ
 
 ----- AI agent updates -------
 
-## Decisions (2026-09-08)
+## Decisions (2026-09-08/09)
 
-`hnj9a` is done (real Lightsail deployment verified live, then torn down
-per explicit request — `tofu apply` from `phase2/iac/` recreates it from
-scratch, no data preserved). This ticket's "test / success-or-rollback"
-half has a full technical design already written:
-[docs/superpowers/specs/2026-09-08-phase2-deploy-observability-design.md](../../docs/superpowers/specs/2026-09-08-phase2-deploy-observability-design.md).
-Summary: one new `phase2/scripts/deploy.sh` orchestrating the existing
-`build.sh` + `phase2/iac/` OpenTofu, adding independent post-deploy
-verification (HTTP smoke test + a Ghost Admin API create/read/delete
-roundtrip exercising the SQLite-over-S3 write path and S3Storage image
-path) and active rollback (redeploy the previous image tag looked up
-from Lightsail's own deployment history) on top. Two failure modes
-handled differently: `tofu apply` itself failing needs no rollback
-(Lightsail leaves the prior deployment ACTIVE); the script's own checks
-failing after a successful `tofu apply` triggers the active rollback.
-The design doc's own "Out of scope" section is authoritative on what
-this pass excludes (notably: the migration/cutover work in this
-ticket's point 1, which is separate scope, still open).
+Prerequisite state: `hnj9a` is done — a real Lightsail deployment was
+verified live, then torn down on request. Recreating it from the IaC gives
+a fresh, empty setup (no data preserved). Full technical design for the
+half decided here:
+[docs/superpowers/specs/2026-09-08-phase2-deploy-observability-design.md](../../docs/superpowers/specs/2026-09-08-phase2-deploy-observability-design.md);
+implementation plan:
+[docs/superpowers/plans/2026-09-08-phase2-deploy-observability-plan.md](../../docs/superpowers/plans/2026-09-08-phase2-deploy-observability-plan.md).
+Those hold the technical detail; the decisions themselves are below.
 
-**Correction (found during planning, before implementation): image
-cleanup in the Admin API roundtrip can't go through the Admin API
-itself** — Ghost's `images.js` endpoint only exposes `upload`, no
-delete. Resolved: the test post is deleted via the Admin API as
-designed; the test image is deleted as a direct S3 `DeleteObject` using
-`deploy.sh`'s own AWS identity (same one already used for ECR
-login/SSM reads) against the key derived from the upload response's
-URL — no new IAM permission needed. Full detail in the design doc's own
-"Correction" section.
+**A deploy is only "successful" if a second, independent layer says so —
+the platform's own container health check is not trusted as the signal.**
+Getting `hnj9a` live proved that health check untrustworthy in both
+directions: it would have passed a container whose credential wiring was
+silently broken, and it failed a fully-working container for many rounds
+over a health-check-path/URL-subpath mismatch. So the deploy pipeline owns
+its own verification.
+- Rejected: relying on the platform health check alone — the reason this
+  ticket's whole verification layer exists.
 
-## Implementation plan
+**Verification runs entirely outside the container, against the deployed
+thing's public surface** — the app's own admin API plus a plain HTTP
+check. No change to Ghost, the launcher, or any runtime code.
+- Rejected: instrumenting the app or its launcher to self-report health —
+  would break the standing "never patch Ghost for this phase's wiring"
+  principle, and makes the thing under test its own witness.
 
-[docs/superpowers/plans/2026-09-08-phase2-deploy-observability-plan.md](../../docs/superpowers/plans/2026-09-08-phase2-deploy-observability-plan.md)
+**What gets verified: reachability, plus one write-path roundtrip that
+creates, reads back, and then deletes a draft with an attached image.**
+That single roundtrip is chosen because it exercises the two mechanisms
+this phase actually invented and that actually broke — the S3-backed
+SQLite write path and S3-backed image storage — while staying
+side-effect-free (never published, removed immediately).
+- Rejected: read-only checks — would pass against a deployment whose
+  writes are broken, which is the exact failure this phase risks.
 
+**Mail is deliberately NOT verified per-deploy.** Accepted, documented
+gap: mail regressions have to be caught by a human noticing a real
+message never arrived.
+- Rejected: sending a real test email each deploy — real side effects on
+  a real mailbox, for a lower-frequency, lower-blast-radius failure than
+  the DB/storage paths, and never an actual cause of failure so far.
 
-## Implementation outcome (2026-09-09)
+**Two failure modes, handled differently.** If the infra apply itself
+fails, the platform has already left the previous deployment serving —
+report and stop, there is nothing to roll back. If the apply succeeds but
+our own verification fails, that needs an *active* rollback: redeploy the
+previous known-good image.
+- Rejected: treating both as one generic "deploy failed" path — would fire
+  a pointless corrective deploy in the first case.
 
-The deploy/verify/rollback half is built and reviewed, on branch
-`i8hlt-deploy-observability`. Shape: a new `phase2/packages/deploy-verify`
-Node package holds the unit-tested pieces (HTTP smoke test, Admin API JWT
-signing, Admin API client, previous-deployment-tag parsing, direct-S3
-cleanup), each taking an injectable fetch/client so tests never touch the
-network or AWS; two thin CLI entrypoints wrap them; `phase2/scripts/deploy.sh`
-orchestrates build → apply → verify → rollback. `phase2/readme.md` gained an
-operational "Deploying" section (how to run it, the one-time SSM Admin API
-key setup, what each outcome means).
+**Rollback derives "what was live before" from the platform's own
+deployment history at run time, never from a local record.** Keeps the
+pipeline idempotent and re-runnable, with nothing to drift out of sync
+with reality.
+- Rejected: a state file (or any local record) tracking the last-good tag.
 
-Deliberate testing split, carried over from the design doc: the logic is
-unit tested, the two CLI wrappers and the bash orchestrator are not — they
-are verified by running them for real, not by mocks.
+**Failure is never escalated by guessing.** A rollback that itself fails
+is a hard stop with an explicit "manual intervention needed" report — no
+second fallback, no retry loop. A first-ever deploy that fails
+verification has no previous version to fall back to: say so explicitly
+and leave the failing deployment live rather than silently doing nothing.
 
-**Not yet done, and required before this ticket is complete:**
-- The one-time manual step: create the Ghost Admin API Custom Integration
-  through the live admin panel, store its `id:secret` in SSM as
-  `ghost_phase2_admin_api_key`. Cannot be automated (integration creation
-  isn't itself exposed via the Admin API).
-- A real end-to-end run against live Lightsail (infra is currently torn
-  down; `tofu apply` recreates it), plus deliberately exercising the
-  rollback path once for real.
-- The migration/cutover work in point 1 above (backup-and-restore,
-  CloudFront origin switch) — untouched, still open.
+**The credential the verification needs (an admin API key) is held in the
+parameter store and read by the deploy tooling under its own identity.
+The container never receives it.** Provisioning that key is a one-time
+manual step through the running admin UI, because creating such an
+integration is not itself exposed via the API — accepted as a documented
+setup step rather than something the pipeline pretends to automate.
+
+**Trigger model: manual, unattended-once-started.** No CI, webhook, or
+scheduled trigger, and no steady-state monitoring of the live site after a
+deploy succeeds — this covers the deploy moment only.
+
+**Correction (found during planning, before implementation): the
+roundtrip's image cleanup cannot go through the admin API** — that API
+exposes image upload but no delete. Resolved: the test post is removed via
+the admin API as designed, and the test image is removed by deleting the
+underlying object in the storage bucket directly, under the deploy
+tooling's own identity, using the location the upload response reports.
+- Rejected: leaving test images behind — accumulates one per deploy run,
+  forever.
+- Rejected: adding a delete capability to Ghost itself — violates "never
+  patch Ghost for this" for a verification-only need.
+
+## Implementation (2026-09-09)
+
+Built on branch `i8hlt-deploy-observability`. How it's done, abstractly:
+the parts carrying real logic (reachability checking, admin-API
+authentication and request/response shaping, deriving the previous
+deployment's version, deriving a storage object's location from its
+public URL) live as small, independently testable units with their
+external dependencies injected, so their tests exercise real behaviour
+without touching the network or the cloud account. Thin command-line
+wrappers expose them, and a single orchestrating script sequences the
+whole cycle — build/publish the image, apply the infra, verify, roll back
+on verification failure — translating each outcome into a distinct,
+diagnosable exit. Operational instructions (how to run it, the one-time
+key provisioning, what each outcome means) live in `phase2/readme.md`.
+
+Deliberate testing split, inherited from the design: the logic units are
+unit tested; the thin wrappers and the orchestration are not — they are
+verified by being run for real, since mocking the cloud would only assert
+our own assumptions about it.
+
+**Still open before this ticket is complete:**
+- The one-time manual key provisioning described above.
+- A real end-to-end run against live infra (currently torn down —
+  reapplying recreates it), including deliberately exercising the
+  rollback path once rather than only reasoning about it.
+- The migration/cutover work in point 1 of the original description
+  (backup-and-restore including images, CloudFront origin switch) —
+  untouched, still open, and out of scope for the design doc above.
