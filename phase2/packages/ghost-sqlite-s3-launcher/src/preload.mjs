@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { S3Client } from '@aws-sdk/client-s3';
 import {
   SqliteS3Client,
@@ -10,6 +11,7 @@ import {
   createCheckpointPolicy,
 } from '@ghost-phase2/sqlite-s3';
 import { findDatabaseInfoPaths, patchDatabaseInfoAt } from './database-info-patch.mjs';
+import { writeCredentialProcessProfile } from './aws-credentials.mjs';
 
 const ghostCheckoutDir = process.env.GHOST_CHECKOUT_DIR;
 const bucket = process.env.SQLITE_S3_BUCKET;
@@ -21,6 +23,22 @@ const ghostCoreDir = ghostCheckoutDir; // GHOST_CHECKOUT_DIR now names the dir c
 
 const dataDir = process.env.SQLITE_S3_DATA_DIR ?? '/tmp/ghost-sqlite-s3';
 fs.mkdirSync(dataDir, { recursive: true });
+
+const roleArn = process.env.AWS_ROLE_ARN;
+if (!roleArn) {
+  throw new Error('AWS_ROLE_ARN must be set');
+}
+const awsConfigPath = process.env.AWS_CONFIG_FILE ?? '/tmp/ghost-aws-config';
+const helperScriptPath = fileURLToPath(new URL('./assume-role-credential-process.mjs', import.meta.url));
+writeCredentialProcessProfile({
+  configPath: awsConfigPath,
+  profileName: 'ghost-phase2',
+  roleArn,
+  helperScriptPath,
+});
+process.env.AWS_CONFIG_FILE = awsConfigPath;
+process.env.AWS_SDK_LOAD_CONFIG = '1';
+process.env.AWS_PROFILE = 'ghost-phase2';
 
 const objectStore = createS3ObjectStore({ bucket, client: new S3Client({ region }) });
 
