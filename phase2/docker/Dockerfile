@@ -26,4 +26,12 @@ RUN apt-get update -qq && \
 
 USER ghost
 ENV GHOST_CHECKOUT_DIR=/home/ghost
-CMD ["node", "--import=/home/ghost/phase2-packages/ghost-sqlite-s3-launcher/src/preload.mjs", "index.js"]
+# stdbuf forces line-buffered stdout/stderr at the OS pipe level. Node's
+# stdout, piped to a non-TTY consumer (exactly what Lightsail's log
+# collector is), is asynchronously buffered by default -- under an abrupt
+# process kill (e.g. Lightsail's "Took too long" deployment cancellation),
+# any buffered-but-unflushed output is lost entirely. Ghost's own boot
+# logging (transports: ["stdout"] in core/shared/config/defaults.json) was
+# suspected to be getting silently eaten this way, regardless of how far
+# boot actually got -- this forces every line out immediately instead.
+CMD ["stdbuf", "-oL", "-eL", "node", "--import=/home/ghost/phase2-packages/ghost-sqlite-s3-launcher/src/preload.mjs", "index.js"]
