@@ -46,6 +46,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
   }
 
   async acquireRawConnection() {
+    console.error('[sqlite-s3] acquireRawConnection: start');
     const { manifest, etag } = await this._s3.manifestStore.read();
     this._manifest = manifest;
     await restoreLocalDb({
@@ -85,6 +86,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // time (a fresh read would almost always match what was just written,
     // silently defeating the overlap check on the fast/no-conflict path).
     connection.__sqliteS3State = { lastWalOffset: 0, pageSize: null, baseline: { manifest, etag } };
+    console.error('[sqlite-s3] acquireRawConnection: done');
     return connection;
   }
 
