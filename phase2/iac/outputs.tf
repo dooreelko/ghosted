@@ -10,3 +10,6 @@ output "app_runtime_role_arn" {
 output "lightsail_service_name" {
   value = aws_lightsail_container_service.ghost.name
 }
+output "public_url" {
+  value = aws_lightsail_container_service.ghost.url
+}
