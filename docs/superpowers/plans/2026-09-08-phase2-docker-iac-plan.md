@@ -28,7 +28,6 @@ The current `GHOST_CHECKOUT_DIR` env var means "monorepo root, `ghost/core` appe
 
 **Files:**
 - Modify: `phase2/packages/ghost-sqlite-s3-launcher/src/preload.mjs`
-- Modify: `phase2/packages/sqlite-s3/smoke/docker-compose.smoke.yaml` (env var value, not the launcher this compose file itself doesn't use — see Task 4, this task only touches the launcher)
 - Create: `phase2/packages/ghost-sqlite-s3-launcher/src/database-info-patch.mjs`
 - Create: `phase2/packages/ghost-sqlite-s3-launcher/test/database-info-patch.test.mjs`
 - Modify: `phase2/packages/ghost-sqlite-s3-launcher/package.json` (add `"test": "node --test"` script)
