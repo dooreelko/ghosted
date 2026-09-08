@@ -17,6 +17,10 @@ appended. Never drop existing text.
 
 See `moth --agent-help`
 
+## Git
+
+Don't use worktrees, but feature branches instead
+
 ## Specs
 
 Moth is the primary spec destination for this repo, not `docs/superpowers/specs/`.
