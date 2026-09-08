@@ -1,6 +1,9 @@
 ID: hnj9a | Severity: med | Status: doing
 Title: Docker Iac
 ---
+ID: hnj9a | Severity: med | Status: doing
+Title: Docker Iac
+---
 this is a subtask of hi3zi
 
 adapt docker images to our needs and create iac for lightsail & co under ./phase2/iac/
@@ -137,3 +140,17 @@ resource-sizing cause (it wasn't the cause) and has been reverted back to
 Everything above is now committed to `phase2/iac/` and `phase2/docker/`;
 the working image tag and exact resource identifiers are recorded in
 `.local-secrets.md` per this repo's sensitive-data convention.
+
+
+## Verification (2026-09-08)
+
+Site (`/blog/`) and admin panel (`/blog/ghost/`) both return 200 on the
+live public Lightsail URL. Container logs show no `AccessDenied`, no
+credential_process errors, no mail-config or S3Storage errors — the
+no-`sts:ExternalId` trust policy design decision holds as-is in this real
+deployment; no correction needed there.
+
+This ticket's scope (adapt Docker images + IaC for Lightsail, get a real
+deployment live) is complete. Not marked done here — that's the user's
+call. Turning this into the actual live site (CloudFront/DNS cutover,
+content/DB migration) is moth i8hlt's scope, untouched by this ticket.
