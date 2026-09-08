@@ -9,20 +9,23 @@ FROM ${BASE_IMAGE}
 USER root
 COPY --chown=nobody:nogroup phase2/packages/sqlite-s3 /home/ghost/phase2-packages/sqlite-s3
 COPY --chown=nobody:nogroup phase2/packages/ghost-sqlite-s3-launcher /home/ghost/phase2-packages/ghost-sqlite-s3-launcher
-RUN cd /home/ghost/phase2-packages/ghost-sqlite-s3-launcher && npm install --omit=dev
 
-# better-sqlite3's node_modules ships a host-built binary that doesn't load
-# under this image's bookworm-slim runtime (different glibc) — rebuild it
-# from source against this image's own toolchain instead of trusting the
-# COPY'd host build. Purge the build toolchain afterward to keep the image
-# slim; it's not needed at runtime.
+# sqlite-s3's own node_modules (including better-sqlite3's native binary)
+# must be installed here, not copied from the host: the host's toolchain
+# and glibc don't match this image's bookworm-slim runtime, and relying on
+# a COPY'd host node_modules also silently depends on the build machine
+# having already run `npm install` there (and ships its devDependencies
+# into the runtime image besides). A build toolchain is needed only to
+# compile better-sqlite3's native extension, then purged to keep the image
+# slim.
 RUN apt-get update -qq && \
     apt-get install -y -qq python3 make g++ > /dev/null && \
-    cd /home/ghost/phase2-packages/sqlite-s3/node_modules/better-sqlite3 && \
-    rm -rf build && npm run build-release && \
+    cd /home/ghost/phase2-packages/sqlite-s3 && npm install --omit=dev && \
     apt-get purge -y -qq python3 make g++ > /dev/null && \
     apt-get autoremove -y -qq > /dev/null && \
     rm -rf /var/lib/apt/lists/*
+
+RUN cd /home/ghost/phase2-packages/ghost-sqlite-s3-launcher && npm install --omit=dev
 
 USER ghost
 ENV GHOST_CHECKOUT_DIR=/home/ghost
