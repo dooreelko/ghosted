@@ -104,6 +104,78 @@ test('overlapping commit is reported as a required retry, not silently merged', 
   assert.deepEqual(result, { retryTransaction: true });
 });
 
+// Regression test for C1: checkpointing resets walSegmentIds to [] and
+// changes baseSegmentId, which breaks the old positional diff
+// (`latestManifest.walSegmentIds.slice(priorWalIds.length)`). If writer A
+// holds a manifest snapshot from BEFORE a checkpoint, and by the time A's
+// CAS attempt runs, writer B's conflicting segment has already been folded
+// into a NEW base by a checkpoint, the old logic would slice the (now
+// short/empty) walSegmentIds array using an offset computed against the
+// OLD (long) array, silently observing zero "new" segments -- and thus zero
+// overlap -- even though B's write already lives in the new base and
+// directly conflicts with A's write-set. That would let A's stale-based
+// commit land, silently overwriting B's already-committed data.
+test('a checkpoint that folds a conflicting writer\'s segment into a new base is still detected as a conflict (C1)', async () => {
+  const { manifestStore, segmentStore } = setup();
+
+  // Writer A's snapshot, taken BEFORE the checkpoint: some pre-existing
+  // history that A believes is current.
+  const priorWalIds = ['seg-pre-1', 'seg-pre-2'];
+  const priorManifest = { baseSegmentId: 'base-old', walSegmentIds: priorWalIds, pageSize: PAGE_SIZE };
+
+  // Between A's snapshot and A's CAS attempt: (1) writer B commits a segment
+  // touching page 5 (the same page A is about to write), and (2) a
+  // checkpoint folds B's segment (and everything else) into a brand new
+  // base, resetting walSegmentIds to [] and changing baseSegmentId. From
+  // A's perspective, the "latest" manifest it sees on conflict is the
+  // POST-checkpoint one -- walSegmentIds is now [], shorter than A's own
+  // priorWalIds array, and baseSegmentId has changed.
+  const postCheckpointManifest = { baseSegmentId: 'base-new-after-checkpoint', walSegmentIds: [], pageSize: PAGE_SIZE };
+
+  // Old logic trace (why it would have wrongly accepted A's commit): with
+  // priorWalIds.length === 2 and latestManifest.walSegmentIds === [],
+  // `latestManifest.walSegmentIds.slice(2)` is `[]` -- "no new segments" --
+  // so theirPages would be an empty set, overlap would be false, and the
+  // old code would rebase and accept A's commit outright, even though B's
+  // conflicting write (page 5) is now baked into base-new-after-checkpoint
+  // where this diff can no longer see it at all.
+
+  let writeAttempts = 0;
+  const staleManifestStore = {
+    async read() {
+      return { manifest: priorManifest, etag: 'etag-old' };
+    },
+    async write(nextManifest, { expectedEtag }) {
+      writeAttempts += 1;
+      if (writeAttempts === 1) {
+        // A's first CAS attempt conflicts -- the manifest has already moved
+        // on to the post-checkpoint state by the time A tries to write.
+        const err = new Error('manifest changed since last read');
+        err.name = 'ManifestConflictError';
+        err.current = { manifest: postCheckpointManifest, etag: 'etag-new' };
+        throw err;
+      }
+      // On the SECOND attempt (the rebase retry), nobody else is contending
+      // any more -- this is exactly the moment the bug bites: if the buggy
+      // positional diff wrongly concluded "no overlap" on the first
+      // conflict, this second write would succeed outright, silently
+      // landing A's stale-based commit over B's already-committed page 5.
+      assert.equal(expectedEtag, 'etag-new');
+      return { etag: 'etag-after-a' };
+    },
+  };
+
+  const committer = createCommitter({ manifestStore: staleManifestStore, segmentStore, sleep: async () => {} });
+  // Writer A's write-set overlaps page 5, which is the page B's
+  // (now-folded-into-base) segment touched.
+  const result = await committer.commitWalDelta(Buffer.from('a-writes-page-5'), [{ pageNumber: 5, dbSizeAfterCommit: 5 }], PAGE_SIZE);
+  // The fixed logic must recognize that the base changed underneath A and
+  // force a full transaction retry -- NOT silently accept a second CAS
+  // write as if it were a safe, non-overlapping rebase.
+  assert.deepEqual(result, { retryTransaction: true });
+  assert.equal(writeAttempts, 1, 'must not attempt a second (silently-overwriting) CAS write once the base has changed');
+});
+
 test('gives up after 10 attempts if every retry keeps conflicting', async () => {
   const { manifestStore, segmentStore } = setup();
   await manifestStore.write({ baseSegmentId: null, walSegmentIds: [], pageSize: PAGE_SIZE }, { expectedEtag: null });

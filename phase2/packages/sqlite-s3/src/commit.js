@@ -2,7 +2,7 @@ import { writeSetFromFrames } from './wal.js';
 
 const MAX_ATTEMPTS = 10;
 
-function fullJitterDelay(attempt, baseMs = 50, capMs = 2000) {
+export function fullJitterDelay(attempt, baseMs = 50, capMs = 2000) {
   const exp = Math.min(capMs, baseMs * 2 ** attempt);
   return Math.random() * exp;
 }
@@ -28,8 +28,23 @@ export function createCommitter({ manifestStore, segmentStore, sleep = (ms) => n
           if (err.name !== 'ManifestConflictError') throw err;
 
           const priorWalIds = manifest ? manifest.walSegmentIds : [];
+          const priorBaseSegmentId = manifest ? manifest.baseSegmentId : null;
           const latestManifest = err.current.manifest;
-          const newSegmentIds = latestManifest.walSegmentIds.slice(priorWalIds.length);
+
+          // Diff by id, not by position: a checkpoint can reset
+          // walSegmentIds to [] and swap in a new baseSegmentId between our
+          // snapshot and this CAS attempt, which makes a positional
+          // slice()-based diff meaningless (it can land on a shorter/empty
+          // array and silently conclude "no new segments").
+          const priorSet = new Set(priorWalIds);
+          const newSegmentIds = latestManifest.walSegmentIds.filter((id) => !priorSet.has(id));
+          // If the base itself changed, some prior segments' write-sets are
+          // no longer individually inspectable -- they've been folded into
+          // the new base -- so we can no longer prove non-overlap. Treat
+          // this as unrebasable regardless of what the (possibly
+          // incomplete) page-level diff below finds.
+          const baseChanged = latestManifest.baseSegmentId !== priorBaseSegmentId;
+
           const theirWriteSets = await Promise.all(
             newSegmentIds.map(async (id) => (await segmentStore.getSegment(id)).meta.writeSet ?? [])
           );
@@ -39,7 +54,7 @@ export function createCommitter({ manifestStore, segmentStore, sleep = (ms) => n
           manifest = latestManifest;
           etag = err.current.etag;
 
-          if (overlap) {
+          if (baseChanged || overlap) {
             return { retryTransaction: true };
           }
           await sleep(fullJitterDelay(attempt));

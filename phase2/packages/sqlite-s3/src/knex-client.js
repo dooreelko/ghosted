@@ -2,7 +2,7 @@
 import BetterSQLite3Client from 'knex/lib/dialects/better-sqlite3/index.js';
 import { statSync, readSync, openSync, closeSync } from 'node:fs';
 import { restoreLocalDb } from './restore.js';
-import { createCommitter } from './commit.js';
+import { createCommitter, fullJitterDelay } from './commit.js';
 import { parseWalHeader, parseFrames } from './wal.js';
 import { extractPageImages, encodePageImages } from './page-images.js';
 import { performCheckpoint } from './checkpoint.js';
@@ -38,6 +38,11 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // and synchronously initializes the pool from it.
     super({ ...config, pool: { min: 1, max: 1 } });
     this._s3 = config.connection.s3 ?? registry.s3;
+    // I1: guards around the fire-and-forget checkpoint kick-off in
+    // _maybeCaptureCommit -- see there for why checkpointing must not run
+    // inline (awaited) on the write path.
+    this._checkpointInFlight = false;
+    this._nextCheckpointAttemptAt = 0;
   }
 
   async acquireRawConnection() {
@@ -200,22 +205,57 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // Checkpointing is a best-effort optimization (bounds restore time by
     // periodically merging the growing wal-segment history into a new base
     // segment) — never let a failure here break the caller's actual write.
+    // I1: it must also never add its own latency (a full local restore plus
+    // full reupload) directly to a caller's write, so this is a
+    // fire-and-forget kick-off, not an awaited call. `_checkpointInFlight`
+    // prevents overlapping attempts; `_nextCheckpointAttemptAt` is a
+    // separate cooldown purely to stop hammering S3 with back-to-back
+    // attempts (e.g. after an abandoned/conflicting one) -- it does NOT
+    // stand in for `checkpointPolicy.recordCheckpoint()`, which is only
+    // ever called on an actual `{checkpointed: true}` result so that an
+    // abandoned attempt correctly leaves the size/time trigger still armed.
     try {
-      if (s3.checkpointPolicy.shouldCheckpoint()) {
-        const result = await performCheckpoint({
-          manifestStore: s3.manifestStore,
-          segmentStore: s3.segmentStore,
-        });
-        if (result.checkpointed) {
-          s3.checkpointPolicy.recordCheckpoint();
-        }
+      if (
+        s3.checkpointPolicy.shouldCheckpoint() &&
+        !this._checkpointInFlight &&
+        // `this` here can be a constructor-less trxClient clone (see the
+        // extensive comments above on acquireRawConnection/
+        // _maybeCaptureCommit) that never ran through this class's
+        // constructor, so `_nextCheckpointAttemptAt` can be `undefined` on
+        // it. `Date.now() >= undefined` is always false, which would
+        // silently block checkpointing forever on any such clone — default
+        // to 0 (no cooldown yet) rather than let a missing field read as
+        // "permanently in cooldown."
+        Date.now() >= (this._nextCheckpointAttemptAt ?? 0)
+      ) {
+        this._checkpointInFlight = true;
+        const CHECKPOINT_COOLDOWN_MS = 30_000;
+        performCheckpoint({ manifestStore: s3.manifestStore, segmentStore: s3.segmentStore })
+          .then((result) => {
+            if (result.checkpointed) {
+              s3.checkpointPolicy.recordCheckpoint();
+            }
+            // On abandonment (CAS conflict), deliberately do NOT call
+            // recordCheckpoint() -- the size/time trigger should keep
+            // believing WAL history is unbounded until a checkpoint
+            // actually lands. The cooldown below is a separate,
+            // independent mechanism purely to prevent hammering S3 with
+            // overlapping attempts.
+          })
+          .catch((err) => {
+            console.error('sqlite-s3: checkpoint attempt failed (non-fatal):', err);
+          })
+          .finally(() => {
+            this._checkpointInFlight = false;
+            this._nextCheckpointAttemptAt = Date.now() + CHECKPOINT_COOLDOWN_MS;
+          });
       }
     } catch (err) {
       console.error('sqlite-s3: checkpoint attempt failed (non-fatal):', err);
     }
   }
 
-  async transaction(container, config, outerTx) {
+  transaction(container, config, outerTx) {
     // The trxClient clone Knex builds internally to run queries inside a
     // transaction (see acquireRawConnection/_maybeCaptureCommit's comments)
     // is created via Object.create(...) and never runs this constructor, so
@@ -255,6 +295,15 @@ export class SqliteS3Client extends BetterSQLite3Client {
       // opted-in, top-level transactions.
       return super.transaction(container, config, outerTx);
     }
+    // I2: `transaction()` itself must stay synchronous so the passthrough
+    // branch above returns super.transaction(...)'s real Transaction object
+    // (an EventEmitter with .on()/.isCompleted()/etc.) directly, not that
+    // object wrapped in a plain Promise. The opted-in retry loop below needs
+    // to be async, so it lives in this separate helper instead.
+    return this._reconcilingTransaction(container, config, outerTx);
+  }
+
+  async _reconcilingTransaction(container, config, outerTx) {
     const MAX_RECONCILE_ATTEMPTS = 10;
     let lastErr;
     for (let attempt = 0; attempt < MAX_RECONCILE_ATTEMPTS; attempt += 1) {
@@ -268,6 +317,11 @@ export class SqliteS3Client extends BetterSQLite3Client {
         // super.transaction() call below will acquire a fresh connection —
         // re-running restoreLocalDb against the now-current S3 state —
         // before re-invoking `container` against that fresh state.
+
+        // I3: back off between attempts (same policy commit.js already
+        // uses for its own CAS retry loop) so two contending writers don't
+        // livelock through all 10 attempts with no delay between them.
+        await new Promise((resolve) => setTimeout(resolve, fullJitterDelay(attempt)));
       }
     }
     throw lastErr;

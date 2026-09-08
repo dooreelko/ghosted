@@ -109,14 +109,37 @@ test('a checkpoint runs when the policy says to, and merges accumulated commits 
     connection: { filename: dbPathA, s3: { manifestStore, segmentStore, checkpointPolicy } },
     useNullAsDefault: true,
   });
-  await knexA.schema.createTable('posts', (t) => {
-    t.increments('id');
-    t.string('title');
+  // I1: checkpointing is now a rate-limited (cooldown-guarded), fire-and-
+  // forget kick-off rather than something awaited inline on every commit —
+  // so two separate top-level statements (schema creation, then an insert)
+  // would each independently trigger a commit/capture cycle, and the
+  // SECOND cycle's checkpoint attempt would be suppressed by the first
+  // checkpoint's cooldown, leaving its own segment uncleared for the
+  // 30-second cooldown window. Batch both statements into a single
+  // transaction so this test produces exactly one commit/capture cycle
+  // (and therefore one checkpoint attempt) — this changes nothing about
+  // what the test proves, only how many WAL commits it produces.
+  await knexA.transaction(async (trx) => {
+    await trx.schema.createTable('posts', (t) => {
+      t.increments('id');
+      t.string('title');
+    });
+    await trx('posts').insert({ title: 'hello' });
   });
-  await knexA('posts').insert({ title: 'hello' });
   await knexA.destroy();
 
-  const { manifest } = await manifestStore.read();
+  // Checkpointing is now fire-and-forget (kicked off from
+  // _maybeCaptureCommit but not awaited on the write path), so its effects
+  // on the manifest may land slightly after the transaction's own promise
+  // resolves. Poll briefly instead of asserting immediately.
+  let manifest;
+  const deadline = Date.now() + 2000;
+  do {
+    ({ manifest } = await manifestStore.read());
+    if (manifest.baseSegmentId && manifest.walSegmentIds.length === 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  } while (Date.now() < deadline);
+
   assert.ok(manifest.baseSegmentId, 'a base segment must exist after a checkpoint ran');
   assert.deepEqual(manifest.walSegmentIds, [], 'wal segments must be cleared after checkpointing');
 
