@@ -4,6 +4,8 @@ A Knex client that makes SQLite durable against S3, for running Ghost on
 compute with no persistent disk (e.g. Lightsail Containers). It's an
 internal package for this repo's Phase 2 work — not published, not general-purpose.
 
+Inspired by https://github.com/chrisk60331/distributed-sqllite
+
 ## Purpose
 
 Lightsail Containers (and similar platforms) have no persistent volume: a
