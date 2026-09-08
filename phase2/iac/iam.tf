@@ -46,8 +46,8 @@ data "aws_iam_policy_document" "app_runtime_permissions" {
   }
 
   statement {
-    sid    = "MailCredentialDecrypt"
-    effect = "Allow"
+    sid     = "MailCredentialDecrypt"
+    effect  = "Allow"
     actions = ["kms:Decrypt"]
     # Scoped (Task 10) to the account's default aws/ssm KMS key, which
     # ghost_imap_token (a SecureString with no custom --key-id) uses.
