@@ -18,6 +18,10 @@ resource "aws_iam_role" "app_runtime" {
   assume_role_policy = data.aws_iam_policy_document.app_runtime_trust.json
 }
 
+data "aws_kms_alias" "ssm_default" {
+  name = "alias/aws/ssm"
+}
+
 data "aws_iam_policy_document" "app_runtime_permissions" {
   statement {
     sid    = "S3DataBucketCrud"
@@ -42,10 +46,15 @@ data "aws_iam_policy_document" "app_runtime_permissions" {
   }
 
   statement {
-    sid       = "MailCredentialDecrypt"
-    effect    = "Allow"
-    actions   = ["kms:Decrypt"]
-    resources = ["*"] # narrow to the specific KMS key ARN at apply time once known (Task 10) — SSM SecureString params typically use the account's default aws/ssm key
+    sid    = "MailCredentialDecrypt"
+    effect = "Allow"
+    actions = ["kms:Decrypt"]
+    # Scoped (Task 10) to the account's default aws/ssm KMS key, which
+    # ghost_imap_token (a SecureString with no custom --key-id) uses.
+    # Looked up by alias rather than hardcoding the key ARN here — see
+    # CLAUDE.md's Sensitive data rule; the exact ARN is recorded in
+    # .local-secrets.md.
+    resources = [data.aws_kms_alias.ssm_default.target_key_arn]
   }
 }
 
