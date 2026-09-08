@@ -170,3 +170,17 @@ Net: the automated Admin API post-creation flow (setup → session →
 create post, described above) is written and exercised as far as
 Ghost's boot sequence allows, but a full green smoke-test run wasn't
 achieved this session — separate from the automation itself.
+
+
+**Closed as done, live**: shipped as designed — fork branch model
+(`main`/`fork_main`), the launcher package, `scripts/sync-ghost.sh`,
+and the README branching docs are all in place and exercised (git
+sync steps and the e2e suite run for real against AWS; the smoke
+test's Admin API automation is written and gets as far as Ghost's own
+boot flakiness allows). `phase2/packages/sqlite-s3`'s unit suite
+passes (61/61). The one known open issue — intermittent
+`KnexTimeoutError` in the DB-ready sequence under some runs, described
+above — is accepted as a follow-up for a later task rather than a
+blocker on this one; this ticket covers the pipeline (branching,
+distribution, launcher, sync automation), not sqlite-s3's own
+reliability.
