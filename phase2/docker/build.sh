@@ -6,11 +6,17 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GHOST_DIR="$REPO_ROOT/Ghost"
 SHA="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
+  echo "ERROR: refusing to build from a dirty tree -- the resulting image tag would not uniquely identify its contents" >&2
+  exit 1
+fi
+
 BASE_TAG="ghost-phase2-base:$SHA"
 FINAL_TAG="ghost-phase2:$SHA"
 
 echo "== Building admin UI (needed by Dockerfile.production's full target) =="
-docker run --rm -v "$GHOST_DIR":/work -w /work node:22.23.1-bookworm-slim bash -c \
+docker run --rm --user "$(id -u):$(id -g)" -v "$GHOST_DIR":/work -w /work node:22.23.1-bookworm-slim bash -c \
   "corepack enable && pnpm install --frozen-lockfile --filter '@tryghost/admin...' && pnpm nx run @tryghost/admin:build"
 
 echo "== Building Ghost's own production image (stage A, unmodified) =="

@@ -39,6 +39,7 @@ data "aws_iam_policy_document" "app_runtime_permissions" {
       "s3:PutObject",
       "s3:DeleteObject",
       "s3:ListBucket",
+      "s3:AbortMultipartUpload",
     ]
     resources = [
       aws_s3_bucket.data.arn,

@@ -1,0 +1,5 @@
+.git
+Ghost/.git
+.local-secrets.md
+node_modules
+.superpowers/

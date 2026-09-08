@@ -11,14 +11,6 @@ resource "aws_lightsail_container_service_deployment_version" "ghost" {
       AWS_ROLE_ARN        = aws_iam_role.app_runtime.arn
       GHOST_URL           = "https://the-well-architected-cloud.com/blog"
       MAIL_SSM_PARAM_NAME = "ghost_imap_token"
-      # Ghost core's boot.js is already instrumented with the `debug` npm
-      # package (namespace "ghost:*", since ghost/core's package.json has no
-      # `alias` field) -- it writes to stderr by default, the same channel
-      # our own preload.mjs checkpoints (rounds 10-11) already confirmed
-      # comes through Lightsail's log capture cleanly. Surfacing Ghost's own
-      # existing internal boot-timing instrumentation for free, no code
-      # change needed.
-      DEBUG = "ghost:*"
     }
 
     ports = {

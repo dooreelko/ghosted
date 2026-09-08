@@ -32,7 +32,7 @@ const roleArn = process.env.AWS_ROLE_ARN;
 if (!roleArn) {
   throw new Error('AWS_ROLE_ARN must be set');
 }
-const awsConfigPath = process.env.AWS_CONFIG_FILE ?? '/tmp/ghost-aws-config';
+const awsConfigPath = process.env.GHOST_PHASE2_AWS_CONFIG_FILE ?? '/tmp/ghost-aws-config';
 const helperScriptPath = fileURLToPath(new URL('./assume-role-credential-process.mjs', import.meta.url));
 writeCredentialProcessProfile({
   configPath: awsConfigPath,
