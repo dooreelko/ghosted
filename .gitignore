@@ -5,3 +5,8 @@
 .instance-backups
 scripts/route53-mailgun*
 .superpowers/
+
+phase2/iac/.terraform/
+phase2/iac/terraform.tfstate
+phase2/iac/terraform.tfstate.backup
+phase2/iac/*.tfvars

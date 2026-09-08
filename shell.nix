@@ -14,6 +14,7 @@ in pkgs.mkShellNoCC {
 	  pkgs.nodejs_25
       pkgs.drawio
       pkgs.sqlite
+      pkgs.opentofu
 
 	  moth
    ];
