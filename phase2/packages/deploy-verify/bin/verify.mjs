@@ -40,6 +40,7 @@ async function main() {
 
   let postId;
   let imageUrl;
+  let roundtripFailure = null;
   try {
     const fixturePath = fileURLToPath(new URL('../fixtures/test-pixel.png', import.meta.url));
     const buffer = await readFile(fixturePath);
@@ -57,8 +58,7 @@ async function main() {
       throw new Error(`expected draft status, got ${readBack.status}`);
     }
   } catch (err) {
-    console.log(JSON.stringify({ ok: false, step: 'admin-api-roundtrip', detail: err.message }));
-    process.exit(1);
+    roundtripFailure = err;
   } finally {
     if (postId) {
       await deletePost(adminBase, token, postId).catch((err) =>
@@ -71,6 +71,11 @@ async function main() {
         console.error(`cleanup: failed to delete test image ${imageUrl}: ${err.message}`),
       );
     }
+  }
+
+  if (roundtripFailure) {
+    console.log(JSON.stringify({ ok: false, step: 'admin-api-roundtrip', detail: roundtripFailure.message }));
+    process.exit(1);
   }
 
   console.log(JSON.stringify({ ok: true }));
