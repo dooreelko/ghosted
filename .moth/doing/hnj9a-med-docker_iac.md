@@ -1,3 +1,6 @@
+ID: hnj9a | Severity: med | Status: doing
+Title: Docker Iac
+---
 this is a subtask of hi3zi
 
 adapt docker images to our needs and create iac for lightsail & co under ./phase2/iac/
@@ -148,3 +151,25 @@ This ticket's scope (adapt Docker images + IaC for Lightsail, get a real
 deployment live) is complete. Not marked done here — that's the user's
 call. Turning this into the actual live site (CloudFront/DNS cutover,
 content/DB migration) is moth i8hlt's scope, untouched by this ticket.
+
+
+## Final review + fix round (2026-09-08)
+
+A final whole-branch review found 9 real, non-blocking issues (a stale
+secrets record, a debug env var left enabled in production, a missing S3
+permission, non-reproducible Docker build, a hardcoded account ID in a
+test, leftover debug logging in the out-of-scope sqlite-s3 package, a
+credential-file-clobber footgun, tag-collision/root-owned-file risks in
+the build script, and a duplicated moth-ticket header). All fixed.
+
+Fixing the build reproducibility issue required actually redeploying to
+catch it properly: two fix-round changes (a build-script dirty-check, and
+moving sqlite-s3's dependency install into the Dockerfile) each had a
+real second-order bug only visible by rebuilding and redeploying for
+real — including a regression of the very glibc/better-sqlite3 mismatch
+already fixed once earlier this session. All caught and fixed the same
+way as everything else in this ticket: by actually running it, not by
+inspection. Current live deployment (`ad7450f`) is healthy on `micro`,
+verified clean.
+
+This ticket is complete.
