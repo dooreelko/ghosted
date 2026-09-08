@@ -15,6 +15,17 @@ if (!roleArn || !region) {
   process.exit(1);
 }
 
+// Breaks a self-recursion: this script inherits AWS_PROFILE/AWS_CONFIG_FILE/
+// AWS_SDK_LOAD_CONFIG from its parent (preload.mjs), and the "ghost-phase2"
+// profile's credential_process points right back at this same script. Left
+// alone, every invocation would spawn a child that tries the same profile-
+// based resolution, spawning another child, forever. Deleting these lets the
+// SDK's default chain fall through to the container's real ambient identity
+// (AWS_CONTAINER_CREDENTIALS_RELATIVE_URI on Lightsail) instead.
+delete process.env.AWS_PROFILE;
+delete process.env.AWS_CONFIG_FILE;
+delete process.env.AWS_SDK_LOAD_CONFIG;
+
 const sts = new STSClient({ region });
 const result = await sts.send(
   new AssumeRoleCommand({
