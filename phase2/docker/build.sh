@@ -16,8 +16,11 @@ BASE_TAG="ghost-phase2-base:$SHA"
 FINAL_TAG="ghost-phase2:$SHA"
 
 echo "== Building admin UI (needed by Dockerfile.production's full target) =="
-docker run --rm --user "$(id -u):$(id -g)" -v "$GHOST_DIR":/work -w /work node:22.23.1-bookworm-slim bash -c \
-  "corepack enable && pnpm install --frozen-lockfile --filter '@tryghost/admin...' && pnpm nx run @tryghost/admin:build"
+# corepack enable needs root (symlinks into /usr/local/bin); chown the
+# mounted volume back to the host user afterward instead of dropping
+# privileges up front, so the host's Ghost/ checkout isn't left root-owned.
+docker run --rm -v "$GHOST_DIR":/work -w /work node:22.23.1-bookworm-slim bash -c \
+  "corepack enable && pnpm install --frozen-lockfile --filter '@tryghost/admin...' && pnpm nx run @tryghost/admin:build && chown -R $(id -u):$(id -g) /work"
 
 echo "== Building Ghost's own production image (stage A, unmodified) =="
 docker build -f "$GHOST_DIR/Dockerfile.production" --target full -t "$BASE_TAG" "$GHOST_DIR"
