@@ -10,3 +10,4 @@ phase2/iac/.terraform/
 phase2/iac/terraform.tfstate
 phase2/iac/terraform.tfstate.backup
 phase2/iac/*.tfvars
+phase2/iac/tfplan

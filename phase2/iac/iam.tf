@@ -1,13 +1,6 @@
-# Verify at apply time (Task 10) whether the AWS provider's
-# aws_lightsail_container_service resource exposes the principal ARN as a
-# computed attribute directly (check `tofu providers schema -json | jq
-# '.provider_schemas."registry.opentofu.org/hashicorp/aws".resource_schemas."aws_lightsail_container_service"'`
-# for a `principal_arn` or similarly-named field). If it's exposed, reference
-# it directly below. If not, fall back to a `data "aws_lightsail_container_service"`
-# data source (often exposes attributes a resource block doesn't) or, as a last
-# resort, an `aws lightsail get-container-services` CLI call captured via an
-# `external` data source. Placeholder reference below assumes the resource
-# attribute exists — Task 10 corrects this if it doesn't.
+# Confirmed at apply time (Task 10) via `tofu providers schema -json`:
+# aws_lightsail_container_service.private_registry_access[0].ecr_image_puller_role[0]
+# exposes `principal_arn` as a real computed string attribute. Referenced directly below.
 data "aws_iam_policy_document" "app_runtime_trust" {
   statement {
     effect  = "Allow"
@@ -15,7 +8,7 @@ data "aws_iam_policy_document" "app_runtime_trust" {
 
     principals {
       type        = "AWS"
-      identifiers = [aws_lightsail_container_service.ghost.private_registry_access[0].ecr_image_puller_role[0].principal_arn == null ? "" : aws_lightsail_container_service.ghost.arn]
+      identifiers = [aws_lightsail_container_service.ghost.private_registry_access[0].ecr_image_puller_role[0].principal_arn]
     }
   }
 }
