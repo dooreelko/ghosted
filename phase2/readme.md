@@ -92,6 +92,192 @@ provisioning" section for detail.
 restore, CloudFront origin switch) is separate, still-open scope (moth
 `i8hlt`), not part of `deploy.sh`.
 
+## Migrating from Phase 1 (the cutover)
+
+Design: `docs/superpowers/specs/2026-09-09-phase2-migration-cutover-design.md`.
+Exact resource identifiers (distribution ID, bucket names, instance and role
+names) live in `.local-secrets.md`, never here.
+
+Every step before step 7 is inert: no traffic has moved and Phase 1 is serving
+its own untouched database throughout. **The accepted downtime window starts
+at step 3** — anything written to Phase 1 after the final backup is lost.
+
+### 0. One-time prerequisites
+
+**`phase2/iac/phase1.auto.tfvars` must exist first.** It's gitignored and
+auto-loaded by OpenTofu, and it carries four values with no default —
+without it, no `tofu plan` or `apply` in `phase2/iac/` runs at all: the
+Phase 1 CloudFront VPC origin's id, the appserver's private DNS name, the
+marketing-root S3 origin's OAC id, and the site's ACM certificate ARN. All
+four are recorded in `.local-secrets.md` under "Phase 2 CloudFront import
+(moth i8hlt)".
+
+The image sync in step 3 runs on the instance under the instance role, so
+that role needs `s3:PutObject` and `s3:ListBucket` on the data bucket's image
+prefix. Attach it once (role and bucket names from `.local-secrets.md`):
+
+```bash
+aws iam put-role-policy \
+  --role-name <the appserver instance's role> \
+  --policy-name ghost-phase2-image-sync \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {"Effect": "Allow", "Action": ["s3:PutObject"],
+       "Resource": "arn:aws:s3:::<data bucket>/blog/content/images/*"},
+      {"Effect": "Allow", "Action": ["s3:ListBucket"],
+       "Resource": "arn:aws:s3:::<data bucket>",
+       "Condition": {"StringLike": {"s3:prefix": "blog/content/images/*"}}}
+    ]
+  }'
+```
+
+Then import the CloudFront distribution into Phase 2 state, once. The HCL in
+`phase2/iac/cloudfront.tf` was written to match the live configuration exactly;
+the empty plan is the gate:
+
+```bash
+cd phase2/iac
+nix-shell -p opentofu --run 'tofu init -backend-config=backend.hcl'
+# with an import block temporarily restored, pointing at the distribution ID
+nix-shell -p opentofu --run 'tofu plan -var deploy_lightsail=true -var image_tag=deadbeef'
+```
+
+Proceed only when the distribution shows **no changes**.
+
+### 1. Upgrade Phase 1 to the target version
+
+The migrated database must land on a Ghost that runs **no schema migrations on
+first boot**, so that any difference between source and result is a real fault
+rather than an expected upgrade artifact. Upgrade Phase 1 first, on its own
+infrastructure, where the upgrade is rehearsed and `scripts/ssm-rollback-ghost.sh`
+exists.
+
+```bash
+scripts/ssm-backup-instance.sh
+scripts/ssm-deploy-ghost-update.sh   # builds from stock upstream main
+```
+
+Pin the exact commit you built and use it for the Phase 2 image too. Verify the
+upgraded Phase 1 site is healthy before continuing.
+
+### 2. Apply the prereqs
+
+```bash
+cd phase2/iac
+nix-shell -p opentofu --run 'tofu apply'
+```
+
+With no flags this brings up only the S3 data bucket and the ECR repository.
+
+### 3. Final backup — the downtime window starts here
+
+```bash
+scripts/ssm-backup-instance.sh --vacuum-db --sync-images s3://<data bucket>/blog/content/images
+```
+
+Note the timestamp it prints: `.instance-backups/<ts>.db` is the source of
+truth for everything below.
+
+### 4. Seed the store
+
+```bash
+cd phase2/packages/sqlite-s3
+node bin/seed-from-sqlite.mjs --db ../../../.instance-backups/<ts>.db --bucket <data bucket>
+```
+
+This fails if the store already holds data; it will never overwrite one.
+
+### 5. Deploy Lightsail
+
+```bash
+git checkout <the pinned commit>
+phase2/scripts/deploy.sh
+```
+
+`deploy.sh` passes `deploy_lightsail=true` and never touches
+`deploy_cloudfront`: a routine deploy must not move traffic.
+
+### 6. Validate — the hard gate
+
+Dump what Ghost actually booted, then compare:
+
+```bash
+cd phase2/packages/sqlite-s3
+node bin/dump-to-sqlite.mjs --bucket <data bucket> --out ../../../.instance-backups/<ts>-post-boot.db
+
+cd ../deploy-verify
+export GHOST_ADMIN_API_KEY="$(aws ssm get-parameter --name ghost_phase2_admin_api_key --with-decryption --region us-east-1 --query Parameter.Value --output text)"
+node bin/validate-migration.mjs \
+  --source-db ../../../.instance-backups/<ts>.db \
+  --target-db ../../../.instance-backups/<ts>-post-boot.db \
+  --public-url "$(cd ../../iac && nix-shell -p opentofu --run 'tofu output -raw public_url')" \
+  --bucket <data bucket>
+```
+
+A red check stops the cutover. The first run will typically report `setting`
+differences — Ghost rewriting its own bookkeeping on boot. Read each one,
+satisfy yourself it is benign, then add its key to `settingsKeys` in
+`phase2/packages/deploy-verify/src/db-compare.mjs` with a note saying why.
+Never add a key you have not read.
+
+Read the printed counts, not just the pass/fail line — the content check
+reports how many posts and images it actually checked, plus a list of any
+images it skipped as not-ours (externally hosted). "Checked 0 images" is the
+shape of a gate that passed without verifying anything; this failure mode was
+found and fixed twice while building this tooling, so treat a suspiciously
+low count as a failure even when the script says PASSED.
+
+### 7. Cut over
+
+```bash
+cd phase2/iac
+nix-shell -p opentofu --run 'tofu apply -var deploy_lightsail=true -var deploy_cloudfront=true -var image_tag=<the deployed tag>'
+```
+
+The `/blog*` behaviours switch to the Lightsail origin and the image behaviour
+is added. The distribution and DNS keep their identity throughout, so this
+takes effect in minutes with no propagation wait.
+
+### 8. Re-validate on the real domain
+
+The same command as step 6, with `--image-check http` and the real site URL as
+`--public-url`, so the check exercises CloudFront and the OAC rather than the
+bucket directly.
+
+### Rolling back
+
+Before step 7 there is nothing to roll back: no traffic moved, Phase 1 is
+untouched, fix and retry from the failed step.
+
+After step 7:
+
+```bash
+cd phase2/iac
+nix-shell -p opentofu --run 'tofu apply -var deploy_lightsail=true -var deploy_cloudfront=false -var image_tag=<tag>'
+```
+
+Behaviours return to the EC2 origin within minutes. The instance stays running
+as the rollback target. **Anything written on Phase 2 after the cutover does
+not exist on Phase 1**, so rolling back trades that content away — an accepted,
+stated cost.
+
+### Tearing down `phase2/iac/` afterward
+
+The CloudFront distribution carries `prevent_destroy`. A plain
+`tofu destroy` in `phase2/iac/` therefore fails outright on that resource —
+and because the failure happens mid-plan, nothing else gets destroyed
+either, not just the distribution. If you're tearing down everything else
+(the pattern was routine at the end of the previous phase), remove the
+distribution from state first so it's left untouched and out of Phase 2's
+management, then destroy the rest:
+
+```bash
+cd phase2/iac
+nix-shell -p opentofu --run 'tofu state rm aws_cloudfront_distribution.site'
+nix-shell -p opentofu --run 'tofu destroy'
+```
+
 ## Cost (this design)
 
 **~$11-12/mo** — Lightsail Micro compute $10 (bundled load balancing +
