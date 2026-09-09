@@ -122,3 +122,113 @@ our own assumptions about it.
 - The migration/cutover work in point 1 of the original description
   (backup-and-restore including images, CloudFront origin switch) —
   untouched, still open, and out of scope for the design doc above.
+
+
+## Migration/cutover decisions (2026-09-09)
+
+Covers point 1 of the original description, previously untouched. Full
+technical design:
+[docs/superpowers/specs/2026-09-09-phase2-migration-cutover-design.md](../../docs/superpowers/specs/2026-09-09-phase2-migration-cutover-design.md).
+
+**Infrastructure comes up in stages, behind two flags** (both default
+off): nothing set deploys the prerequisites (data bucket, image
+registry); one flag adds the container service and everything that can
+only be expressed once it exists; the second repoints the CDN at it.
+Staging matters because the backup and seeding steps need the bucket to
+exist long before there is anything to run.
+- The app's runtime role sits under the container-service flag, not with
+  the prerequisites: its trust policy names the service's own principal,
+  and that attribute cannot be filled in later — the role is
+  unexpressible without the service and meaningless before it. Rejected:
+  keeping it with the prerequisites behind a placeholder trust policy,
+  which is either invalid or a security regression.
+- Asking for the CDN flag without the service flag fails before anything
+  is applied: there would be no origin to point at.
+
+**The CDN distribution is adopted into this phase's IaC rather than left
+hand-managed** — but only through an empty-plan gate: describe the
+existing distribution, iterate until a plan reports no changes at all,
+and only then wire the flag. The gate is the safety mechanism; it means
+the live configuration is never guessed at. The distribution is also
+marked undeletable, because destroying this phase's stack was routine
+during `hnj9a` and this one distribution serves the whole site, not just
+the blog.
+- Rejected: switching the origin with a script and leaving the CDN out of
+  IaC — smallest blast radius, closest to how phase 1 is operated, but
+  gives up the declarative flag and leaves cutover state untracked.
+- Rejected: standing up a second distribution and moving DNS — cleanest
+  end state, but reproduces the root site's origins, behaviours and
+  certificate for no current benefit, and makes rollback wait on DNS
+  instead of a behaviour flip.
+
+**The old instance is upgraded first, then its database is taken.** The
+migrated database must land on a Ghost that runs no schema migrations on
+first boot, so that any difference between source and result is a real
+fault rather than an expected upgrade artifact. Upgrading happens on the
+old instance, where it is a rehearsed operation with an existing rollback
+script, and is verified healthy before anything is copied.
+- Rejected: building the new setup at the old version instead — leaves
+  the upgrade as unfinished business immediately after a cutover.
+- Rejected: letting the new setup migrate the database on first boot —
+  the schema then legitimately differs, so validation weakens to
+  content-level comparison, and any fault means debugging new
+  infrastructure and a version jump at once.
+
+**Both sides build from stock upstream; the local-patches branch is
+retired.** All of this phase's wiring lives in the launcher, so no Ghost
+source is patched. The one carried patch is not currently effective, so
+there is nothing to preserve; reintroducing it belongs to `syigu`. One
+commit is pinned at cutover time and used for both the old instance's
+upgrade artifact and the new image.
+- Rejected: merging upstream into the patched branch and building both
+  sides from it — preserves a patch that does nothing, at the cost of a
+  conflict-heavy merge and a permanently diverged branch.
+
+**The database snapshot is taken with an online-safe copy, not a file
+copy** — the source is live, and copying it directly yields a torn
+snapshot plus a separate write-ahead log.
+
+**Images are synced from the instance directly to their final location**
+in the data bucket, so the image migration is that one sync. Rejected:
+the existing chunked-transfer script (caps out well below the ~15MB of
+content, as `hi3zi` found) and tar-then-unpack staging (buys nothing).
+- The storage prefix is set so the public path maps 1:1 onto the stored
+  key, leaving rendered URLs unchanged. Rejected: an edge function
+  rewriting the request path — an extra moving part and failure mode for
+  the same mapping.
+
+**Seeding refuses to overwrite.** A tool turns a plain database file into
+the store's initial state, writing the root pointer conditionally on it
+not already existing — so seeding a store that already holds data fails
+outright. Deliberately no force flag: clearing a store should be a
+separate, explicit act. Its inverse (reading a plain database back out)
+is built alongside, because validation needs it and because without it
+there is no way to recover a readable database from the store at all.
+
+**Validation is a hard gate before traffic moves**, run against the new
+setup's own endpoint. It compares the source database against the
+post-boot one — not byte-wise, since the application mutates state on
+boot regardless — using row counts everywhere plus content checksums on
+the tables that carry posts, users, tags and members, against an
+**explicit allowlist of what may legitimately differ**. Anything outside
+that list fails. The allowlist is the point: it turns "what changes on
+boot" into a reviewable statement instead of a judgement call made under
+pressure. Alongside it, a content check walks recent posts through the
+admin API and confirms every referenced image actually resolves — the
+only check that catches a broken image path — and a short human look at
+a few pages.
+
+**Cutover order and reversibility**: upgrade and verify the old instance;
+apply prerequisites; take the final backup (the accepted downtime window
+starts here — anything written afterwards is lost); seed; deploy the
+container service and validate against its own endpoint; only then flip
+the CDN; re-validate on the real domain. Everything before the CDN flip
+is inert. Rollback is flipping it back — the old instance keeps serving
+its own untouched database throughout, and since the distribution and DNS
+never change identity, recovery takes minutes rather than a propagation
+wait. The cost of rolling back is any content written to the new setup
+after cutover; stated, not silent.
+
+**Out of scope**: decommissioning the old instance (it stays as the
+rollback target), reintroducing any Ghost source patch, steady-state
+monitoring, and any DNS or certificate change.
