@@ -102,6 +102,10 @@ Every step before step 7 is inert: no traffic has moved and Phase 1 is serving
 its own untouched database throughout. **The accepted downtime window starts
 at step 3** — anything written to Phase 1 after the final backup is lost.
 
+Every command block below is written to run from the repository root; where a
+block changes directory, the next block that needs the root starts with an
+explicit `cd` back rather than assuming it.
+
 ### 0. One-time prerequisites
 
 **`phase2/iac/phase1.auto.tfvars` must exist first.** It's gitignored and
@@ -133,33 +137,80 @@ aws iam put-role-policy \
 ```
 
 Then import the CloudFront distribution into Phase 2 state, once. The HCL in
-`phase2/iac/cloudfront.tf` was written to match the live configuration exactly;
-the empty plan is the gate:
+`phase2/iac/cloudfront.tf` was written to match the live configuration exactly:
 
 ```bash
 cd phase2/iac
 nix-shell -p opentofu --run 'tofu init -backend-config=backend.hcl'
-# with an import block temporarily restored, pointing at the distribution ID
+```
+
+**Before running plan, temporarily add an `import` block to
+`phase2/iac/cloudfront.tf`**, targeting `aws_cloudfront_distribution.site`
+with the live distribution's ID (from `.local-secrets.md`) as its `id`.
+Pasted verbatim as a shell comment it is inert — `tofu plan` would run
+without it and hand back a plan with no import in it, a wrong gate that
+raises no error, so it has to actually be written into the file:
+
+```bash
 nix-shell -p opentofu --run 'tofu plan -var deploy_lightsail=true -var image_tag=deadbeef'
 ```
 
-Proceed only when the distribution shows **no changes**.
+The gate is the distribution showing **zero changes** — the S3 bucket and
+ECR repo legitimately show as pending creates at this point, since nothing
+but the distribution has been applied yet; only the distribution's own diff
+needs to be empty. Once the plan confirms the import is clean, delete the
+`import` block again — it's a one-time bootstrap, not something that stays
+in the HCL.
 
 ### 1. Upgrade Phase 1 to the target version
 
 The migrated database must land on a Ghost that runs **no schema migrations on
 first boot**, so that any difference between source and result is a real fault
 rather than an expected upgrade artifact. Upgrade Phase 1 first, on its own
-infrastructure, where the upgrade is rehearsed and `scripts/ssm-rollback-ghost.sh`
-exists.
+infrastructure, where the upgrade is rehearsed and rollback is at hand.
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 scripts/ssm-backup-instance.sh
-scripts/ssm-deploy-ghost-update.sh   # builds from stock upstream main
+scripts/ssm-switch-to-mainstream-ghost.sh
 ```
 
-Pin the exact commit you built and use it for the Phase 2 image too. Verify the
-upgraded Phase 1 site is healthy before continuing.
+`ssm-switch-to-mainstream-ghost.sh` moves the instance off the retired
+custom-fork build and onto stock Ghost via `ghost update --force` (npm
+registry, ghost-cli's own update path, no `--zip`) — this migration's
+decision that the local patch is retired and both sides run stock. It
+requires the scoped sudoers rule from `scripts/ssm-install-ghost-cli-sudoers.sh`
+to already be installed (`ghost update` shells out to `sudo` internally). If
+it needs rolling back, ghost-cli keeps the previous version directory: use
+`ghost rollback` (as `ghostadmin`) or `scripts/ssm-rollback-ghost.sh <version>`.
+
+To pin an exact build instead of taking whatever the registry currently
+considers stable, push a tarball and deploy it directly instead of the command
+above:
+
+```bash
+scripts/ssm-scp.sh push <local-tarball> <remote-path>
+scripts/ssm-deploy-ghost-update.sh <remote-path>
+scripts/ssm-copy-admin-build.sh <from-version> <to-version>
+```
+
+`ssm-deploy-ghost-update.sh` installs an archive already sitting on the
+instance via ghost-cli's `--zip` path — it builds nothing itself, so the
+tarball has to be pushed first. That push is chunked base64 with a small
+per-chunk cap, so it's slow for a large tarball. `ssm-copy-admin-build.sh`
+is needed afterward because the admin UI isn't part of that build.
+
+**Both sides of the cutover must end up on the same Ghost version.** Whichever
+route you took, read the version the instance actually landed on — ghost-cli
+reports it, and the live version directory's name under
+`/var/www/ghost/versions/` confirms it — and build the Phase 2 image from
+that same version rather than assuming the fork's `main` and the
+mainstream-update route happened to agree. There's no mechanism here that
+pins this for you; it's a manual check at cutover time. The evidence it
+worked is step 6's database comparison: a version skew shows up there as
+schema-level table or checksum differences, not as a clean gate.
+
+Verify the upgraded Phase 1 site is healthy before continuing.
 
 ### 2. Apply the prereqs
 
@@ -173,6 +224,7 @@ With no flags this brings up only the S3 data bucket and the ECR repository.
 ### 3. Final backup — the downtime window starts here
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 scripts/ssm-backup-instance.sh --vacuum-db --sync-images s3://<data bucket>/blog/content/images
 ```
 
@@ -191,6 +243,7 @@ This fails if the store already holds data; it will never overwrite one.
 ### 5. Deploy Lightsail
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 git checkout <the pinned commit>
 phase2/scripts/deploy.sh
 ```
@@ -231,6 +284,7 @@ low count as a failure even when the script says PASSED.
 ### 7. Cut over
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 cd phase2/iac
 nix-shell -p opentofu --run 'tofu apply -var deploy_lightsail=true -var deploy_cloudfront=true -var image_tag=<the deployed tag>'
 ```
@@ -253,6 +307,7 @@ untouched, fix and retry from the failed step.
 After step 7:
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 cd phase2/iac
 nix-shell -p opentofu --run 'tofu apply -var deploy_lightsail=true -var deploy_cloudfront=false -var image_tag=<tag>'
 ```
@@ -273,6 +328,7 @@ distribution from state first so it's left untouched and out of Phase 2's
 management, then destroy the rest:
 
 ```bash
+cd "$(git rev-parse --show-toplevel)"
 cd phase2/iac
 nix-shell -p opentofu --run 'tofu state rm aws_cloudfront_distribution.site'
 nix-shell -p opentofu --run 'tofu destroy'
