@@ -27,7 +27,7 @@ test('readPageSize reads the page size out of the SQLite header', async () => {
 
 test('readPageSize decodes the 65536 special case', () => {
   const header = Buffer.alloc(100);
-  header.write('SQLite format 3 ', 0, 'latin1');
+  header.write('SQLite format 3\0', 0, 'latin1');
   header.writeUInt16BE(1, 16);
   assert.equal(readPageSize(header), 65536);
 });
@@ -61,16 +61,26 @@ test('seedStoreFromSqliteFile writes a base segment and an initial manifest', as
 
 test('seedStoreFromSqliteFile refuses to overwrite an existing store', async () => {
   const dbPath = await makeDb();
+  const sourceBytes = await readFile(dbPath);
   const store = createInMemoryObjectStore();
   const manifestStore = createManifestStore(store);
   const segmentStore = createSegmentStore(store);
 
-  await seedStoreFromSqliteFile({ dbPath, manifestStore, segmentStore });
+  const result1 = await seedStoreFromSqliteFile({ dbPath, manifestStore, segmentStore });
+  const before = await manifestStore.read();
 
   await assert.rejects(
     () => seedStoreFromSqliteFile({ dbPath, manifestStore, segmentStore }),
     /already seeded/
   );
+
+  // Verify the store survived: manifest unchanged
+  const after = await manifestStore.read();
+  assert.deepEqual(after.manifest, before.manifest);
+
+  // Verify the store survived: base segment still holds the original bytes
+  const segment = await segmentStore.getSegment(result1.baseSegmentId);
+  assert.deepEqual(Buffer.from(segment.bytes), sourceBytes);
 });
 
 test('seedStoreFromSqliteFile rejects a file that is not a SQLite database', async () => {

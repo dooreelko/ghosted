@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 
-const SQLITE_MAGIC = 'SQLite format 3 ';
+// SQLite file header magic: "SQLite format 3" followed by a NUL terminator.
+// The sixteenth byte (index 15) is 0x00 (NUL), not a space.
+const SQLITE_MAGIC = 'SQLite format 3\0';
 
 /**
  * The page size lives at byte offset 16 of the SQLite header as a big-endian
@@ -12,8 +14,7 @@ export function readPageSize(fileBytes) {
     throw new Error('not a SQLite database: header magic missing or file truncated');
   }
   const magic = fileBytes.subarray(0, 16).toString('latin1');
-  // Accept both "SQLite format 3 " (with space) and "SQLite format 3\0" (with null byte)
-  if (magic !== SQLITE_MAGIC && magic !== 'SQLite format 3\0') {
+  if (magic !== SQLITE_MAGIC) {
     throw new Error('not a SQLite database: header magic missing or file truncated');
   }
   const raw = fileBytes.readUInt16BE(16);
