@@ -41,7 +41,15 @@ while [[ $# -gt 0 ]]; do
     --sync-images)
       SYNC_IMAGES="${2:-}"
       if [[ -z "$SYNC_IMAGES" ]]; then
-        echo "--sync-images needs an s3:// URI" >&2
+        echo "--sync-images needs an s3:// URI in form s3://BUCKET/PREFIX" >&2
+        exit 1
+      fi
+      if [[ "$SYNC_IMAGES" != s3://* ]]; then
+        echo "error: --sync-images argument must start with s3://, got: $SYNC_IMAGES" >&2
+        exit 1
+      fi
+      if [[ "$SYNC_IMAGES" == *\'* ]]; then
+        echo "error: --sync-images argument cannot contain single quotes" >&2
         exit 1
       fi
       shift 2
@@ -86,18 +94,25 @@ if [[ "$VACUUM_DB" == true ]]; then
   REMOTE_DB="/tmp/ghost-snapshot-${TS}.db"
   LOCAL_DB="$OUT_DIR/${TS}.db"
 
+  # Cleanup trap: remove remote temp file on exit, regardless of success or failure.
+  # Use set +e to prevent the cleanup itself from masking the original exit code.
+  trap 'set +e; run_command "rm -f $REMOTE_DB" >/dev/null 2>&1' EXIT
+
   echo "Taking a clean database snapshot with VACUUM INTO..."
   # VACUUM INTO reads the live database and writes a new, fully-checkpointed
   # single file; it never modifies the source. A plain `cp` of a running
   # Ghost's ghost.db is torn and leaves the WAL behind in a separate file.
-  run_command "sudo rm -f $REMOTE_DB; \
-    sudo sqlite3 /var/www/ghost/content/data/ghost.db \"VACUUM INTO '$REMOTE_DB'\"; \
-    sudo chmod 644 $REMOTE_DB; \
+  # The command chain uses && so that any step's failure stops the chain;
+  # sqlite3 on a missing file creates an empty one and reports `ok`, so a
+  # `;` chain cannot distinguish a failed VACUUM from a successful one.
+  run_command "sudo rm -f $REMOTE_DB && \
+    sudo sqlite3 /var/www/ghost/content/data/ghost.db \"VACUUM INTO '$REMOTE_DB'\" && \
+    sudo test -s $REMOTE_DB && \
+    sudo chmod 644 $REMOTE_DB && \
     sudo sqlite3 $REMOTE_DB 'PRAGMA integrity_check;'" >/dev/null
 
   echo "Fetching database snapshot..."
   ssm_pull "$REMOTE_DB" "$LOCAL_DB"
-  run_command "rm -f $REMOTE_DB" >/dev/null
 
   echo "Database snapshot saved: $LOCAL_DB"
 fi
