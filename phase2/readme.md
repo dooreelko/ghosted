@@ -121,25 +121,9 @@ marketing-root S3 origin's OAC id, and the site's ACM certificate ARN. All
 four are recorded in `.local-secrets.md` under "Phase 2 CloudFront import
 (moth i8hlt)".
 
-The image sync in step 3 runs on the instance under the instance role, so
-that role needs `s3:PutObject` and `s3:ListBucket` on the data bucket's image
-prefix. Attach it once (role and bucket names from `.local-secrets.md`):
-
-```bash
-aws iam put-role-policy \
-  --role-name <the appserver instance's role> \
-  --policy-name ghost-phase2-image-sync \
-  --policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [
-      {"Effect": "Allow", "Action": ["s3:PutObject"],
-       "Resource": "arn:aws:s3:::<data bucket>/blog/content/images/*"},
-      {"Effect": "Allow", "Action": ["s3:ListBucket"],
-       "Resource": "arn:aws:s3:::<data bucket>",
-       "Condition": {"StringLike": {"s3:prefix": "blog/content/images/*"}}}
-    ]
-  }'
-```
+The instance-role grant that step 3's image sync needs is **not** here: it
+reads the bucket name out of `tofu output`, so it can only run once step 2
+has created the bucket. It lives in step 3, where it is used.
 
 Then import the CloudFront distribution into Phase 2 state, once. The HCL in
 `phase2/iac/cloudfront.tf` was written to match the live configuration exactly:
@@ -257,10 +241,31 @@ bucket and the ECR repository.
 
 ### 3. Final backup — the downtime window starts here
 
+The sync half runs on the instance under the instance role, so that role
+needs `s3:PutObject` and a prefix-scoped `s3:ListBucket` on the bucket step 2
+just created. Attach it once — the role name is in `.local-secrets.md` under
+the Phase 1 heading, as "IAM instance role":
+
 ```bash
 cd "$(git rev-parse --show-toplevel)"
+scripts/attach-image-sync-policy.sh <the appserver instance's role>
+```
+
+The grant is deliberately narrow: the same bucket holds the SQLite store's
+segments and manifest, and the instance is the source of a one-way migration,
+not a participant in the store. Re-running it is safe, and is how you would
+narrow the policy later.
+
+Then take the backup itself:
+
+```bash
 scripts/ssm-backup-instance.sh --vacuum-db --sync-images s3://<data bucket>/blog/content/images
 ```
+
+The database half needs no `sqlite3` on the instance — it runs `VACUUM INTO`
+through Ghost's own vendored `better-sqlite3` (`scripts/remote-vacuum.js`),
+asserts `integrity_check` is `ok`, and pulls the snapshot gzipped, since
+every byte of that transfer costs an SSM round trip.
 
 Note the timestamp it prints: `.instance-backups/<ts>.db` is the source of
 truth for everything below.
