@@ -5,3 +5,4 @@ export { createCheckpointPolicy } from './checkpoint.js';
 export { createInMemoryObjectStore, createS3ObjectStore } from './object-store.js';
 export { restoreLocalDb } from './restore.js';
 export { seedStoreFromSqliteFile, readPageSize } from './seed.js';
+export { dumpStoreToSqliteFile } from './dump.js';
