@@ -80,14 +80,18 @@ async function main() {
   }
 
   const base = publicUrl.replace(/\/$/, '');
-  const siteHost = new URL(base).host;
   const [keyId, secretHex] = adminApiKey.split(':');
   const token = generateAdminToken({ keyId, secretHex });
 
+  // Deliberately not derived from --public-url: pre-cutover, --public-url is
+  // the Lightsail service's own auto-generated URL, while every image URL
+  // Ghost renders is under the real site domain (GHOST_URL) on every boot,
+  // pre- and post-cutover alike. makeS3ImageChecker matches on path prefix,
+  // not host, for exactly that reason — see its doc comment.
   const imageChecker =
     imageCheck === 'http'
       ? makeHttpImageChecker()
-      : makeS3ImageChecker({ bucket, s3Client: new S3Client({ region }), siteHost });
+      : makeS3ImageChecker({ bucket, s3Client: new S3Client({ region }) });
 
   console.log(`== content check (images via ${imageCheck}) ==`);
   const contentResult = await checkContent({

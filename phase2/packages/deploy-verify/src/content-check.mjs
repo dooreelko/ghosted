@@ -39,21 +39,29 @@ export function imageUrlToKey(url) {
  * check would pass even if the S3 sync had failed entirely. Checking the
  * bucket directly is the only check that means anything before traffic moves.
  *
- * `siteHost`, when given, limits the HeadObject check to images served from
- * the blog's own host. `imageUrlToKey` ignores the URL's host entirely, so an
- * externally-hosted image (a third-party CDN embed) would otherwise have its
- * *path* mapped onto a bucket key that legitimately does not exist and get
- * reported as a false failure — noise that trains an operator to distrust (and
- * eventually override) a real one. Such URLs are reported back to the caller
- * as `'skipped'` rather than silently treated as passing or failing.
+ * `keyPrefix` (default `blog/content/images/`) decides whether a URL is ours
+ * to check, based on its *path*, not its host. Ghost renders every image URL
+ * under its configured `GHOST_URL` — the real site domain — on every boot,
+ * pre-cutover and post-cutover alike, while the pre-cutover run's
+ * `--public-url` is the Lightsail service's own auto-generated URL: a
+ * different host by design, since validating the new stack before any DNS or
+ * CDN change is the entire point of that run. Matching on host would then
+ * make every real image look external and get skipped — the S3 HeadObject
+ * check silently checking nothing on the one run where it is the only
+ * meaningful image check there is. The path prefix is exactly the 1:1
+ * path→key mapping this checker already relies on, and it holds regardless
+ * of which host served the URL. A URL whose decoded path does not start with
+ * the prefix (a genuine third-party CDN embed) is reported back to the
+ * caller as `'skipped'` rather than silently treated as passing or failing.
  */
-export function makeS3ImageChecker({ bucket, s3Client, siteHost }) {
+export function makeS3ImageChecker({ bucket, s3Client, keyPrefix = 'blog/content/images/' }) {
   return async (url) => {
-    if (siteHost && new URL(url).host !== siteHost) {
+    const key = imageUrlToKey(url);
+    if (!key.startsWith(keyPrefix)) {
       return 'skipped';
     }
     try {
-      await s3Client.send(new HeadObjectCommand({ Bucket: bucket, Key: imageUrlToKey(url) }));
+      await s3Client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
       return true;
     } catch {
       return false;
@@ -106,9 +114,11 @@ export async function checkContent({
 
   const missingImages = [];
   const skippedExternalImages = [];
+  let imagesFound = 0;
   let imagesChecked = 0;
   for (const post of posts) {
     for (const url of extractImageUrls(post)) {
+      imagesFound += 1;
       const result = await imageChecker(url);
       if (result === 'skipped') {
         skippedExternalImages.push({ postId: post.id, url });
@@ -119,6 +129,15 @@ export async function checkContent({
         missingImages.push({ postId: post.id, url });
       }
     }
+  }
+
+  // Closes the class of false PASS this gate exists to prevent, not just the
+  // one instance (an empty post list) already caught above: whatever the
+  // reason — every image skipped, a checker that always reports 'skipped',
+  // a future change nobody anticipated — if the posts carried image URLs and
+  // none of them were actually checked, that is not a passing result.
+  if (imagesFound > 0 && imagesChecked === 0) {
+    differences.push({ resource: 'images', expected: 'at least one image checked', actual: 0 });
   }
 
   return {

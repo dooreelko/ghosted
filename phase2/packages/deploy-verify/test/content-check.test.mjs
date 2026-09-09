@@ -103,7 +103,7 @@ test('makeS3ImageChecker reports false for a missing object', async () => {
   assert.equal(await check('https://site/blog/content/images/gone.png'), false);
 });
 
-test('makeS3ImageChecker skips a URL whose host is not the site host', async () => {
+test('makeS3ImageChecker skips a URL whose path is outside the storage prefix', async () => {
   const seen = [];
   const s3Client = {
     async send(command) {
@@ -112,12 +112,16 @@ test('makeS3ImageChecker skips a URL whose host is not the site host', async () 
     },
   };
 
-  const check = makeS3ImageChecker({ bucket: 'data-bucket', s3Client, siteHost: 'site' });
-  assert.equal(await check('https://cdn.example/blog/content/images/a.png'), 'skipped');
+  const check = makeS3ImageChecker({ bucket: 'data-bucket', s3Client });
+  assert.equal(await check('https://cdn.example/not-ours/a.png'), 'skipped');
   assert.deepEqual(seen, []);
 });
 
-test('makeS3ImageChecker still checks a same-host URL when siteHost is set', async () => {
+test('makeS3ImageChecker still checks a same-prefix URL served from a different host than --public-url', async () => {
+  // The whole point of the pre-cutover run: --public-url is the Lightsail
+  // service's own auto-generated URL, while Ghost renders every image under
+  // its configured GHOST_URL (the real site domain) on every boot. A host
+  // check here would skip every real image on exactly that run.
   const seen = [];
   const s3Client = {
     async send(command) {
@@ -126,8 +130,11 @@ test('makeS3ImageChecker still checks a same-host URL when siteHost is set', asy
     },
   };
 
-  const check = makeS3ImageChecker({ bucket: 'data-bucket', s3Client, siteHost: 'site' });
-  assert.equal(await check('https://site/blog/content/images/a.png'), true);
+  const check = makeS3ImageChecker({ bucket: 'data-bucket', s3Client });
+  assert.equal(
+    await check('https://real-site-domain.example/blog/content/images/a.png'),
+    true
+  );
   assert.equal(seen[0].Key, 'blog/content/images/a.png');
 });
 
@@ -291,4 +298,35 @@ test('checkContent collects a skipped external image separately instead of dropp
     { postId: 'p1', url: 'https://cdn.example/x.png' },
   ]);
   assert.equal(result.imagesChecked, 1);
+});
+
+test('checkContent fails when a post carries images but every one of them was skipped', async () => {
+  // Closes the class, not just the empty-posts instance: whatever the
+  // reason none of a post's images got a real check (all skipped, a
+  // misconfigured checker, ...), that must not read as a pass.
+  const fetchImpl = fakeApi({
+    totals: { users: 1, tags: 0 },
+    posts: [
+      {
+        id: 'p1',
+        feature_image: 'https://cdn.example/a.png',
+        html: '<img src="https://cdn.example/b.png">',
+      },
+    ],
+  });
+
+  const result = await checkContent({
+    adminBase: 'https://site/blog/ghost/api/admin',
+    token: 'tok',
+    expected: { users: 1, tags: 0 },
+    imageChecker: async () => 'skipped',
+    fetchImpl,
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.differences, [
+    { resource: 'images', expected: 'at least one image checked', actual: 0 },
+  ]);
+  assert.equal(result.imagesChecked, 0);
+  assert.equal(result.skippedExternalImages.length, 2);
 });
