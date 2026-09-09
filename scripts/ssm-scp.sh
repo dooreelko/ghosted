@@ -63,13 +63,20 @@ ssm_pull() {
   local remote="$1" local_path="$2"
   local remote_b64="/tmp/ssm-scp-pull-$$.b64"
 
+  # Suffix width is pinned on BOTH sides. `split -d` defaults to two digits,
+  # so it runs out past 100 chunks (~1.8MB of payload at this chunk size),
+  # while `seq -w` pads to the width of the largest number -- which only
+  # coincidentally matches two digits for 10..99 chunks. The two disagreeing
+  # is how a 3.3MB pull failed with "chunk-000: No such file or directory"
+  # after the transfer itself had succeeded. Four digits is 10000 chunks,
+  # far past what this channel is usable for anyway.
   local num_chunks
-  num_chunks="$(run_command "base64 -w0 '$remote' > '$remote_b64' && split -b $PULL_CHUNK_BYTES -d '$remote_b64' '${remote_b64}.chunk-'; ls '${remote_b64}.chunk-'* | wc -l" | tr -d '[:space:]')"
+  num_chunks="$(run_command "base64 -w0 '$remote' > '$remote_b64' && split -b $PULL_CHUNK_BYTES -a 4 -d '$remote_b64' '${remote_b64}.chunk-'; ls '${remote_b64}.chunk-'* | wc -l" | tr -d '[:space:]')"
 
   : > "$local_path.b64"
   local i
-  for i in $(seq -w 0 $((num_chunks - 1))); do
-    run_command "cat '${remote_b64}.chunk-${i}'" >> "$local_path.b64"
+  for ((i = 0; i < num_chunks; i++)); do
+    run_command "cat '$(printf '%s.chunk-%04d' "$remote_b64" "$i")'" >> "$local_path.b64"
   done
 
   base64 -d "$local_path.b64" > "$local_path"

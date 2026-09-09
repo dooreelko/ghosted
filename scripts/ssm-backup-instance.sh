@@ -92,6 +92,7 @@ tar tzf "$LOCAL_TGZ"
 
 if [[ "$VACUUM_DB" == true ]]; then
   REMOTE_DB="/tmp/ghost-snapshot-${TS}.db"
+  REMOTE_VACUUM_JS="/tmp/ghost-remote-vacuum-${TS}.js"
   LOCAL_DB="$OUT_DIR/${TS}.db"
 
   # Cleanup trap: remove remote temp file on exit, regardless of success or failure.
@@ -101,25 +102,43 @@ if [[ "$VACUUM_DB" == true ]]; then
   # here would silently override the script's real exit code with 1. Running
   # it in a subshell contains that: `exit` inside the subshell only ends the
   # subshell, so `|| true` outside it can actually catch the failure.
-  trap '( run_command "rm -f $REMOTE_DB" ) >/dev/null 2>&1 || true' EXIT
+  trap '( run_command "rm -f $REMOTE_DB ${REMOTE_DB}.gz $REMOTE_VACUUM_JS" ) >/dev/null 2>&1 || true' EXIT
 
   echo "Taking a clean database snapshot with VACUUM INTO..."
   # VACUUM INTO reads the live database and writes a new, fully-checkpointed
   # single file; it never modifies the source. A plain `cp` of a running
   # Ghost's ghost.db is torn and leaves the WAL behind in a separate file.
-  # The command chain uses && so that any step's failure stops the chain;
-  # sqlite3 on a missing file creates an empty one and reports `ok`, so a
-  # `;` chain cannot distinguish a failed VACUUM from a successful one.
-  # The final PRAGMA integrity_check is checked by its output (ok) not its exit
-  # code, because sqlite3 returns 0 for both "ok" and corruption messages.
-  run_command "sudo rm -f $REMOTE_DB && \
-    sudo sqlite3 /var/www/ghost/content/data/ghost.db \"VACUUM INTO '$REMOTE_DB'\" && \
-    sudo test -s $REMOTE_DB && \
-    sudo chmod 644 $REMOTE_DB && \
-    sudo sqlite3 $REMOTE_DB 'PRAGMA integrity_check;' | grep -qx ok" >/dev/null
+  #
+  # The work is done by scripts/remote-vacuum.js, shipped to the instance
+  # base64-encoded so no quoting has to survive both the local shell and the
+  # remote one. It runs under Ghost's own vendored better-sqlite3 because the
+  # appserver has no sqlite3 CLI (confirmed: `apt-cache policy sqlite3` →
+  # "Installed: (none)"), and installing a package on a production instance
+  # just to take a backup is the worse trade. That script also asserts
+  # integrity_check's OUTPUT rather than its exit code, since a corrupt
+  # database reports its problems as result rows and still succeeds as a
+  # query.
+  #
+  # The chain uses && so any step's failure stops it: a later step that finds
+  # no file must not be able to create an empty one and pronounce it healthy.
+  VACUUM_JS_B64="$(base64 -w0 "$REPO_ROOT/scripts/remote-vacuum.js")"
 
+  run_command "sudo rm -f $REMOTE_DB && \
+    echo '$VACUUM_JS_B64' | base64 -d > $REMOTE_VACUUM_JS && \
+    sudo node $REMOTE_VACUUM_JS /var/www/ghost/current/node_modules \
+      /var/www/ghost/content/data/ghost.db $REMOTE_DB && \
+    sudo test -s $REMOTE_DB && \
+    sudo gzip -f $REMOTE_DB && \
+    sudo chmod 644 ${REMOTE_DB}.gz"
+
+  # Pull the snapshot COMPRESSED. Every byte here rides the SSM channel as
+  # base64 inside command output, chunked at ~18KB per round trip, so the
+  # transfer cost is linear in payload size and a Ghost database compresses
+  # to a small fraction of itself. Uncompressed, a 3.3MB database is roughly
+  # 245 round trips; gzipped it is a few dozen.
   echo "Fetching database snapshot..."
-  ssm_pull "$REMOTE_DB" "$LOCAL_DB"
+  ssm_pull "${REMOTE_DB}.gz" "${LOCAL_DB}.gz"
+  gunzip -f "${LOCAL_DB}.gz"
 
   echo "Database snapshot saved: $LOCAL_DB"
 fi
