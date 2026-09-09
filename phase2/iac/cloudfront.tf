@@ -7,9 +7,10 @@
 #
 # The managed cache/origin-request policies below are looked up by name
 # rather than hardcoded by ID so no CloudFront resource ID needs to live
-# in this tracked file. See .local-secrets.md (Phase 1 heading) for the
-# distribution ID, the VPC origin ID, and the custom cache policy's ID --
-# none of them belong here.
+# in this tracked file. The identifiers that have no such lookup (VPC
+# origin id, appserver private DNS, marketing-root OAC id, site ACM cert
+# ARN) are no-default variables instead -- see variables.tf and
+# .local-secrets.md ("Phase 2 CloudFront import" heading).
 data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
 }
@@ -26,14 +27,6 @@ data "aws_cloudfront_origin_request_policy" "all_viewer" {
   name = "Managed-AllViewer"
 }
 
-# Looked up by domain rather than hardcoding the ARN, which embeds the
-# account ID.
-data "aws_acm_certificate" "site" {
-  domain      = "the-well-architected-cloud.com"
-  types       = ["AMAZON_ISSUED"]
-  most_recent = true
-}
-
 resource "aws_cloudfront_distribution" "site" {
   aliases                         = ["the-well-architected-cloud.com"]
   comment                         = null
@@ -46,9 +39,6 @@ resource "aws_cloudfront_distribution" "site" {
   retain_on_delete                = false
   staging                         = false
   tags = {
-    Name = "the-well-architected-cloud.com"
-  }
-  tags_all = {
     Name = "the-well-architected-cloud.com"
   }
   wait_for_deployment = true
@@ -102,10 +92,11 @@ resource "aws_cloudfront_distribution" "site" {
     realtime_log_config_arn    = ""
     response_headers_policy_id = ""
     smooth_streaming           = false
-    target_origin_id           = "ghost-classic-appserver-vpc-origin"
-    trusted_key_groups         = []
-    trusted_signers            = []
-    viewer_protocol_policy     = "redirect-to-https"
+    # See the blog/* behaviour below for why this is a ternary.
+    target_origin_id       = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
+    trusted_key_groups     = []
+    trusted_signers        = []
+    viewer_protocol_policy = "redirect-to-https"
     grpc_config {
       enabled = false
     }
@@ -125,7 +116,7 @@ resource "aws_cloudfront_distribution" "site" {
     realtime_log_config_arn    = ""
     response_headers_policy_id = ""
     smooth_streaming           = false
-    target_origin_id           = "ghost-classic-appserver-vpc-origin"
+    target_origin_id           = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
     trusted_key_groups         = []
     trusted_signers            = []
     viewer_protocol_policy     = "redirect-to-https"
@@ -140,19 +131,13 @@ resource "aws_cloudfront_distribution" "site" {
   dynamic "ordered_cache_behavior" {
     for_each = var.deploy_cloudfront ? [1] : []
     content {
-      path_pattern           = "/blog/content/images/*"
+      path_pattern           = "blog/content/images/*"
       target_origin_id       = "s3-ghost-phase2-data"
       viewer_protocol_policy = "redirect-to-https"
       allowed_methods        = ["GET", "HEAD"]
       cached_methods         = ["GET", "HEAD"]
       compress               = true
-
-      forwarded_values {
-        query_string = false
-        cookies {
-          forward = "none"
-        }
-      }
+      cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
     }
   }
 
@@ -196,7 +181,7 @@ resource "aws_cloudfront_distribution" "site" {
     realtime_log_config_arn    = ""
     response_headers_policy_id = ""
     smooth_streaming           = false
-    target_origin_id           = "ghost-classic-appserver-vpc-origin"
+    target_origin_id           = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
     trusted_key_groups         = []
     trusted_signers            = []
     viewer_protocol_policy     = "redirect-to-https"
@@ -205,31 +190,37 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
-  # Phase 1 EC2 origin, via CloudFront's VPC-origin feature. Left as
-  # generated: there is no name-based data source for a VPC origin, so its
-  # ID is an unavoidable literal here -- see .local-secrets.md (Phase 1
-  # heading, "CloudFront VPC origin") for what it points at.
+  # Phase 1 EC2 origin, via CloudFront's VPC-origin feature. Its ID and the
+  # instance's private DNS name are no-default variables (see variables.tf)
+  # rather than literals -- both are sensitive identifiers that must stay
+  # out of tracked files; the real values live in .local-secrets.md and are
+  # supplied via the gitignored phase1.auto.tfvars.
+  #
+  # No /blog* behaviour targets this origin_id while deploy_cloudfront =
+  # true (all four are retargeted to lightsail-ghost-phase2 above) -- this
+  # block still has to exist though, because it's the rollback path:
+  # flipping deploy_cloudfront back to false must not require re-adding an
+  # origin, only re-pointing the behaviours' target_origin_id.
   origin {
     connection_attempts = 3
     connection_timeout  = 10
-    domain_name         = "ip-172-30-0-204.ec2.internal"
+    domain_name         = var.appserver_private_dns
     origin_id           = "ghost-classic-appserver-vpc-origin"
     origin_path         = ""
     vpc_origin_config {
       origin_keepalive_timeout = 5
       origin_read_timeout      = 30
-      vpc_origin_id            = "vo_9dZLR0ZDlJGBe3m7LL7vht"
+      vpc_origin_id            = var.vpc_origin_id
     }
   }
 
   # Phase 1 marketing-root S3 origin (not part of phase2 state). Its OAC ID
-  # has no name-based data source either, so it too stays a literal --
-  # unrelated to the phase2 data-bucket OAC created below.
+  # is a no-default variable for the same reason -- see variables.tf.
   origin {
     connection_attempts      = 3
     connection_timeout       = 10
     domain_name              = "the-well-architected-cloud.com.s3.eu-central-1.amazonaws.com"
-    origin_access_control_id = "E720X64XOT8CG"
+    origin_access_control_id = var.marketing_root_oac_id
     origin_id                = "the-well-architected-cloud.com.s3.eu-central-1.amazonaws.com-mf4f3dx09q5"
     origin_path              = ""
   }
@@ -272,7 +263,7 @@ resource "aws_cloudfront_distribution" "site" {
   }
 
   viewer_certificate {
-    acm_certificate_arn            = data.aws_acm_certificate.site.arn
+    acm_certificate_arn            = var.site_acm_certificate_arn
     cloudfront_default_certificate = false
     iam_certificate_id             = ""
     minimum_protocol_version       = "TLSv1.2_2021"
