@@ -232,3 +232,37 @@ after cutover; stated, not silent.
 **Out of scope**: decommissioning the old instance (it stays as the
 rollback target), reintroducing any Ghost source patch, steady-state
 monitoring, and any DNS or certificate change.
+
+
+## Implementation outcome (migration/cutover half)
+
+Built, reviewed and committed on `i8hlt-deploy-observability`. Nine units of
+work: the image key layout in the launcher; the staged IaC flags; the CDN
+distribution brought under phase 2 state; the backup extension; the store
+seeder and its inverse; the database comparison; the content check and the
+operator gate; the runbook. 137 unit tests pass across the three packages.
+
+**What the reviews changed, and why it matters.** Three separate defects would
+each have let the validation gate report success while content was missing —
+a gate that checked no posts, a gate that skipped every image because it
+compared hosts that differ by design before cutover, and a comparison that
+checks the migrated store against its own source rather than against what the
+application is actually serving. All three are fixed and have tests that fail
+without the fix. A fourth would have shipped an empty database as a good
+snapshot: the remote snapshot chain reported the status of its last command,
+and that command created and blessed an empty file when the real work had
+already failed. The content checksum was also rewritten because its ad-hoc
+encoding could not distinguish two genuinely different rows.
+
+**Still to do, and deliberately not done here**: the cutover itself. Every
+step of it runs against live production — the instance upgrade, the final
+backup, the seeding, the CDN flip — and the runbook is written for a person
+to execute with the gates in front of them. Two facts in it are load-bearing:
+the downtime window opens at the final backup, not at the flip; and rolling
+back after the flip discards anything written since.
+
+**Known limits, accepted**: the allowlist of what may differ on boot ships
+empty by design and is populated from an observed boot during the run itself;
+the image check covers recent posts rather than the whole archive; and a
+rehearsal against a scratch bucket before the real cutover is recommended
+precisely because it moves the allowlist work outside the downtime window.
