@@ -69,15 +69,26 @@ export function tableRowCounts(db) {
  * its column names, the rows are sorted, then hashed. Physical row order is a
  * detail a base-segment round-trip has no obligation to preserve, so an
  * ordering difference must not read as a content difference.
+ *
+ * The serialisation must be unambiguous: this is a hard gate, and an
+ * ambiguous encoding turns a real content difference into a silent pass.
+ * `JSON.stringify` over the row's sorted [key, value] pairs is used rather
+ * than a hand-rolled delimited string because it escapes its own delimiters
+ * (so a `|` or `=` inside a value — routine in Ghost's HTML/mobiledoc/JSON
+ * columns — cannot shift a field boundary and alias two different rows),
+ * distinguishes a real `null` from any string that merely looks like one,
+ * and renders a `Buffer` as a distinct structural form instead of a lossy
+ * UTF-8 stringification that two different blobs could collide on.
  */
 export function contentChecksum(db, table) {
   const rows = db.prepare(`SELECT * FROM "${table}"`).all();
   const serialised = rows
     .map((row) =>
-      Object.keys(row)
-        .sort()
-        .map((key) => `${key}=${row[key] === null ? '<null>' : String(row[key])}`)
-        .join('|')
+      JSON.stringify(
+        Object.keys(row)
+          .sort()
+          .map((key) => [key, row[key]])
+      )
     )
     .sort();
 
@@ -145,7 +156,17 @@ export function compareDatabases({ source, target, allowlist = BOOT_MUTATION_ALL
     for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
       if (allowedSettings.has(key)) continue;
       if (a[key] !== b[key]) {
-        differences.push({ kind: 'setting', name: key, detail: `source ${a[key]}, target ${b[key]}` });
+        const inSource = Object.prototype.hasOwnProperty.call(a, key);
+        const inTarget = Object.prototype.hasOwnProperty.call(b, key);
+        let detail;
+        if (inSource && !inTarget) {
+          detail = `removed in target (was ${a[key]})`;
+        } else if (!inSource && inTarget) {
+          detail = `added in target (${b[key]})`;
+        } else {
+          detail = `changed: source ${a[key]}, target ${b[key]}`;
+        }
+        differences.push({ kind: 'setting', name: key, detail });
       }
     }
   }
