@@ -37,6 +37,30 @@ test('extractImageUrls de-duplicates repeats', () => {
   assert.deepEqual(extractImageUrls(post), ['https://site/blog/content/images/a.png']);
 });
 
+test('extractImageUrls pulls candidates out of a srcset-only image', () => {
+  const post = {
+    feature_image: null,
+    html: '<img srcset="https://site/blog/content/images/small.png 400w, https://site/blog/content/images/large.png 800w">',
+  };
+
+  assert.deepEqual(extractImageUrls(post), [
+    'https://site/blog/content/images/small.png',
+    'https://site/blog/content/images/large.png',
+  ]);
+});
+
+test('extractImageUrls de-duplicates a src that also appears in srcset', () => {
+  const post = {
+    feature_image: null,
+    html: '<img src="https://site/blog/content/images/a.png" srcset="https://site/blog/content/images/a.png 1x, https://site/blog/content/images/a-2x.png 2x">',
+  };
+
+  assert.deepEqual(extractImageUrls(post), [
+    'https://site/blog/content/images/a.png',
+    'https://site/blog/content/images/a-2x.png',
+  ]);
+});
+
 test('imageUrlToKey drops the origin and the leading slash', () => {
   assert.equal(
     imageUrlToKey('https://site/blog/content/images/2026/01/hero.png'),
@@ -77,6 +101,34 @@ test('makeS3ImageChecker reports false for a missing object', async () => {
 
   const check = makeS3ImageChecker({ bucket: 'data-bucket', s3Client });
   assert.equal(await check('https://site/blog/content/images/gone.png'), false);
+});
+
+test('makeS3ImageChecker skips a URL whose host is not the site host', async () => {
+  const seen = [];
+  const s3Client = {
+    async send(command) {
+      seen.push(command.input);
+      return {};
+    },
+  };
+
+  const check = makeS3ImageChecker({ bucket: 'data-bucket', s3Client, siteHost: 'site' });
+  assert.equal(await check('https://cdn.example/blog/content/images/a.png'), 'skipped');
+  assert.deepEqual(seen, []);
+});
+
+test('makeS3ImageChecker still checks a same-host URL when siteHost is set', async () => {
+  const seen = [];
+  const s3Client = {
+    async send(command) {
+      seen.push(command.input);
+      return {};
+    },
+  };
+
+  const check = makeS3ImageChecker({ bucket: 'data-bucket', s3Client, siteHost: 'site' });
+  assert.equal(await check('https://site/blog/content/images/a.png'), true);
+  assert.equal(seen[0].Key, 'blog/content/images/a.png');
 });
 
 test('makeHttpImageChecker reports true only on a 200', async () => {
@@ -125,7 +177,10 @@ test('checkContent passes when counts match and every image resolves', async () 
 });
 
 test('checkContent fails on a count mismatch', async () => {
-  const fetchImpl = fakeApi({ totals: { users: 1, tags: 2 }, posts: [] });
+  const fetchImpl = fakeApi({
+    totals: { users: 1, tags: 2 },
+    posts: [{ id: 'p1', feature_image: null, html: '' }],
+  });
 
   const result = await checkContent({
     adminBase: 'https://site/blog/ghost/api/admin',
@@ -163,4 +218,77 @@ test('checkContent fails and names every image that does not resolve', async () 
   assert.deepEqual(result.missingImages, [
     { postId: 'p1', url: 'https://site/blog/content/images/bad.png' },
   ]);
+});
+
+test('checkContent fails when no posts come back, even if counts match', async () => {
+  const fetchImpl = fakeApi({ totals: { users: 1, tags: 0 }, posts: [] });
+
+  const result = await checkContent({
+    adminBase: 'https://site/blog/ghost/api/admin',
+    token: 'tok',
+    expected: { users: 1, tags: 0 },
+    imageChecker: async () => true,
+    fetchImpl,
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.differences, [
+    { resource: 'posts', expected: 'at least one post to check', actual: 0 },
+  ]);
+  assert.equal(result.postsChecked, 0);
+  assert.equal(result.imagesChecked, 0);
+});
+
+test('checkContent reports how many posts and images were checked on success', async () => {
+  const fetchImpl = fakeApi({
+    totals: { users: 1, tags: 0 },
+    posts: [
+      {
+        id: 'p1',
+        feature_image: 'https://site/blog/content/images/a.png',
+        html: '<img src="https://site/blog/content/images/b.png">',
+      },
+    ],
+  });
+
+  const result = await checkContent({
+    adminBase: 'https://site/blog/ghost/api/admin',
+    token: 'tok',
+    expected: { users: 1, tags: 0 },
+    imageChecker: async () => true,
+    fetchImpl,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.postsChecked, 1);
+  assert.equal(result.imagesChecked, 2);
+});
+
+test('checkContent collects a skipped external image separately instead of dropping it', async () => {
+  const fetchImpl = fakeApi({
+    totals: { users: 1, tags: 0 },
+    posts: [
+      {
+        id: 'p1',
+        feature_image: 'https://site/blog/content/images/a.png',
+        html: '<img src="https://cdn.example/x.png">',
+      },
+    ],
+  });
+
+  const imageChecker = async (url) => (url.includes('cdn.example') ? 'skipped' : true);
+
+  const result = await checkContent({
+    adminBase: 'https://site/blog/ghost/api/admin',
+    token: 'tok',
+    expected: { users: 1, tags: 0 },
+    imageChecker,
+    fetchImpl,
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.skippedExternalImages, [
+    { postId: 'p1', url: 'https://cdn.example/x.png' },
+  ]);
+  assert.equal(result.imagesChecked, 1);
 });

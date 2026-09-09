@@ -54,34 +54,40 @@ async function main() {
   const source = new Database(sourceDbPath, { readonly: true });
   const target = new Database(targetDbPath, { readonly: true });
 
-  console.log('== database comparison ==');
-  const dbResult = compareDatabases({ source, target, allowlist: BOOT_MUTATION_ALLOWLIST });
-  if (dbResult.ok) {
-    console.log('ok: no differences outside the boot-mutation allowlist');
-  } else {
-    for (const d of dbResult.differences) {
-      console.log(`DIFF ${d.kind} ${d.name}: ${d.detail}`);
+  let dbResult;
+  let expected;
+  try {
+    console.log('== database comparison ==');
+    dbResult = compareDatabases({ source, target, allowlist: BOOT_MUTATION_ALLOWLIST });
+    if (dbResult.ok) {
+      console.log('ok: no differences outside the boot-mutation allowlist');
+    } else {
+      for (const d of dbResult.differences) {
+        console.log(`DIFF ${d.kind} ${d.name}: ${d.detail}`);
+      }
     }
+
+    // Post counts are covered by the database comparison above: the Admin API's
+    // post total includes drafts, and matching it from SQL would mean
+    // replicating Ghost's exact filter. Users and tags have no such ambiguity.
+    expected = {
+      users: source.prepare('SELECT COUNT(*) AS n FROM users').get().n,
+      tags: source.prepare('SELECT COUNT(*) AS n FROM tags').get().n,
+    };
+  } finally {
+    source.close();
+    target.close();
   }
 
-  // Post counts are covered by the database comparison above: the Admin API's
-  // post total includes drafts, and matching it from SQL would mean
-  // replicating Ghost's exact filter. Users and tags have no such ambiguity.
-  const expected = {
-    users: source.prepare('SELECT COUNT(*) AS n FROM users').get().n,
-    tags: source.prepare('SELECT COUNT(*) AS n FROM tags').get().n,
-  };
-  source.close();
-  target.close();
-
   const base = publicUrl.replace(/\/$/, '');
+  const siteHost = new URL(base).host;
   const [keyId, secretHex] = adminApiKey.split(':');
   const token = generateAdminToken({ keyId, secretHex });
 
   const imageChecker =
     imageCheck === 'http'
       ? makeHttpImageChecker()
-      : makeS3ImageChecker({ bucket, s3Client: new S3Client({ region }) });
+      : makeS3ImageChecker({ bucket, s3Client: new S3Client({ region }), siteHost });
 
   console.log(`== content check (images via ${imageCheck}) ==`);
   const contentResult = await checkContent({
@@ -91,13 +97,22 @@ async function main() {
     imageChecker,
   });
   if (contentResult.ok) {
-    console.log('ok: user/tag counts match, every image on the recent posts resolves');
+    console.log(
+      `ok: user/tag counts match, every image on the recent posts resolves ` +
+        `(checked ${contentResult.postsChecked} posts, ${contentResult.imagesChecked} images)`
+    );
   } else {
     for (const d of contentResult.differences) {
       console.log(`DIFF count ${d.resource}: expected ${d.expected}, got ${d.actual}`);
     }
     for (const m of contentResult.missingImages) {
       console.log(`MISSING image on post ${m.postId}: ${m.url}`);
+    }
+  }
+  if (contentResult.skippedExternalImages.length > 0) {
+    console.log('== externally-hosted images (not checked against the bucket) ==');
+    for (const s of contentResult.skippedExternalImages) {
+      console.log(`  SKIPPED on post ${s.postId}: ${s.url}`);
     }
   }
 

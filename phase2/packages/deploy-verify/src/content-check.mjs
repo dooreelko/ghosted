@@ -2,12 +2,23 @@ import { HeadObjectCommand } from '@aws-sdk/client-s3';
 import { getResourceTotal, listRecentPosts } from './admin-api-client.mjs';
 
 const IMG_SRC = /<img[^>]+src=["']([^"']+)["']/gi;
+// Matches srcset on any element (<img srcset=...> and <picture><source
+// srcset=...>), since Ghost's responsive-image and gallery cards emit both.
+const SRCSET = /\bsrcset=["']([^"']+)["']/gi;
 
 export function extractImageUrls(post) {
   const urls = [];
   if (post.feature_image) urls.push(post.feature_image);
-  for (const match of String(post.html ?? '').matchAll(IMG_SRC)) {
+  const html = String(post.html ?? '');
+  for (const match of html.matchAll(IMG_SRC)) {
     urls.push(match[1]);
+  }
+  for (const match of html.matchAll(SRCSET)) {
+    // Each candidate is "<url> <descriptor>", comma-separated; keep the URL.
+    for (const candidate of match[1].split(',')) {
+      const url = candidate.trim().split(/\s+/)[0];
+      if (url) urls.push(url);
+    }
   }
   return [...new Set(urls)];
 }
@@ -27,9 +38,20 @@ export function imageUrlToKey(url) {
  * PHASE 1 origin at that point, where these images exist on disk — an HTTP
  * check would pass even if the S3 sync had failed entirely. Checking the
  * bucket directly is the only check that means anything before traffic moves.
+ *
+ * `siteHost`, when given, limits the HeadObject check to images served from
+ * the blog's own host. `imageUrlToKey` ignores the URL's host entirely, so an
+ * externally-hosted image (a third-party CDN embed) would otherwise have its
+ * *path* mapped onto a bucket key that legitimately does not exist and get
+ * reported as a false failure — noise that trains an operator to distrust (and
+ * eventually override) a real one. Such URLs are reported back to the caller
+ * as `'skipped'` rather than silently treated as passing or failing.
  */
-export function makeS3ImageChecker({ bucket, s3Client }) {
+export function makeS3ImageChecker({ bucket, s3Client, siteHost }) {
   return async (url) => {
+    if (siteHost && new URL(url).host !== siteHost) {
+      return 'skipped';
+    }
     try {
       await s3Client.send(new HeadObjectCommand({ Bucket: bucket, Key: imageUrlToKey(url) }));
       return true;
@@ -72,14 +94,39 @@ export async function checkContent({
   }
 
   const posts = await listRecentPosts(adminBase, token, postLimit, fetchImpl);
+  // An empty post list means the image loop below runs zero times and would
+  // otherwise report a silent, unearned PASS — exactly the false PASS this
+  // gate exists to prevent (wrong filter, API drift, an over-scoped token,
+  // postLimit walking past a differently-sorted result). The Admin API's
+  // posts total is deliberately not compared elsewhere (it counts drafts),
+  // so nothing else in the pipeline would have caught this.
+  if (posts.length === 0) {
+    differences.push({ resource: 'posts', expected: 'at least one post to check', actual: 0 });
+  }
+
   const missingImages = [];
+  const skippedExternalImages = [];
+  let imagesChecked = 0;
   for (const post of posts) {
     for (const url of extractImageUrls(post)) {
-      if (!(await imageChecker(url))) {
+      const result = await imageChecker(url);
+      if (result === 'skipped') {
+        skippedExternalImages.push({ postId: post.id, url });
+        continue;
+      }
+      imagesChecked += 1;
+      if (!result) {
         missingImages.push({ postId: post.id, url });
       }
     }
   }
 
-  return { ok: differences.length === 0 && missingImages.length === 0, differences, missingImages };
+  return {
+    ok: differences.length === 0 && missingImages.length === 0,
+    differences,
+    missingImages,
+    skippedExternalImages,
+    postsChecked: posts.length,
+    imagesChecked,
+  };
 }
