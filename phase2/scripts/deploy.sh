@@ -16,7 +16,10 @@ NEW_TAG="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 "$REPO_ROOT/phase2/docker/build.sh"
 
 echo "== Step 2/4: tofu apply (image_tag=$NEW_TAG) =="
-if ! tofu_ "apply -auto-approve -var image_tag=$NEW_TAG"; then
+# deploy_lightsail=true, and deploy_cloudfront deliberately left at its
+# default false: a routine deploy must never move public traffic. The cutover
+# is a separate, explicit apply (see phase2/readme.md).
+if ! tofu_ "apply -auto-approve -var deploy_lightsail=true -var image_tag=$NEW_TAG"; then
   echo "DEPLOY FAILED at tofu apply -- Lightsail rejected the new version." >&2
   echo "The previously ACTIVE deployment is untouched and still serving. No rollback needed." >&2
   exit 1
@@ -44,7 +47,7 @@ if ! PREVIOUS_TAG="$(echo "$DEPLOYMENTS_JSON" | node "$VERIFY_DIR/bin/previous-t
 fi
 
 echo "== Step 4/4: rolling back to $PREVIOUS_TAG =="
-if ! tofu_ "apply -auto-approve -var image_tag=$PREVIOUS_TAG"; then
+if ! tofu_ "apply -auto-approve -var deploy_lightsail=true -var image_tag=$PREVIOUS_TAG"; then
   echo "ROLLBACK ALSO FAILED. Manual intervention needed. Currently-live tag is whatever Lightsail last had ACTIVE (check 'aws lightsail get-container-service-deployments')." >&2
   exit 1
 fi

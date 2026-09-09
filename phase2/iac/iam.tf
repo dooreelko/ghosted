@@ -10,20 +10,24 @@
 # attribute) -- every deployed container's AssumeRole call was denied until
 # this was corrected to the top-level principal_arn.
 data "aws_iam_policy_document" "app_runtime_trust" {
+  count = var.deploy_lightsail ? 1 : 0
+
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
 
     principals {
       type        = "AWS"
-      identifiers = [aws_lightsail_container_service.ghost.principal_arn]
+      identifiers = [aws_lightsail_container_service.ghost[0].principal_arn]
     }
   }
 }
 
 resource "aws_iam_role" "app_runtime" {
+  count = var.deploy_lightsail ? 1 : 0
+
   name               = "ghost-phase2-app-runtime"
-  assume_role_policy = data.aws_iam_policy_document.app_runtime_trust.json
+  assume_role_policy = data.aws_iam_policy_document.app_runtime_trust[0].json
 }
 
 data "aws_kms_alias" "ssm_default" {
@@ -68,7 +72,9 @@ data "aws_iam_policy_document" "app_runtime_permissions" {
 }
 
 resource "aws_iam_role_policy" "app_runtime_permissions" {
+  count = var.deploy_lightsail ? 1 : 0
+
   name   = "ghost-phase2-app-runtime-permissions"
-  role   = aws_iam_role.app_runtime.id
+  role   = aws_iam_role.app_runtime[0].id
   policy = data.aws_iam_policy_document.app_runtime_permissions.json
 }
