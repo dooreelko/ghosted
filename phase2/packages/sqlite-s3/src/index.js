@@ -4,3 +4,4 @@ export { createSegmentStore } from './segments.js';
 export { createCheckpointPolicy } from './checkpoint.js';
 export { createInMemoryObjectStore, createS3ObjectStore } from './object-store.js';
 export { restoreLocalDb } from './restore.js';
+export { seedStoreFromSqliteFile, readPageSize } from './seed.js';
