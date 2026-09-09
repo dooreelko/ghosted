@@ -25,6 +25,22 @@ export const BOOT_MUTATION_ALLOWLIST = {
     'api_keys', // ...and its key
   ],
   settingsKeys: [],
+
+  // Columns whose value Ghost updates as a matter of bookkeeping, on tables
+  // whose CONTENT still has to be compared. Allowlisting the whole table
+  // would be the wrong instrument here: `members` is the paying audience, and
+  // exempting it entirely would let 33 members vanish undetected. Excluding
+  // one column keeps every other field of every row under the checksum.
+  //
+  // Like settingsKeys, this is populated from an OBSERVED boot and never by
+  // guessing. Each entry names what moved and why it is not content.
+  volatileColumns: {
+    // Ghost stamps a member's last_seen_at when it observes activity, so it
+    // moves on any boot the site then serves traffic. Observed in the phase 2
+    // rehearsal: exactly one member's last_seen_at advanced, nothing else in
+    // the table changed.
+    members: ['last_seen_at'],
+  },
 };
 
 /**
@@ -80,12 +96,14 @@ export function tableRowCounts(db) {
  * and renders a `Buffer` as a distinct structural form instead of a lossy
  * UTF-8 stringification that two different blobs could collide on.
  */
-export function contentChecksum(db, table) {
+export function contentChecksum(db, table, excludeColumns = []) {
+  const excluded = new Set(excludeColumns);
   const rows = db.prepare(`SELECT * FROM "${table}"`).all();
   const serialised = rows
     .map((row) =>
       JSON.stringify(
         Object.keys(row)
+          .filter((key) => !excluded.has(key))
           .sort()
           .map((key) => [key, row[key]])
       )
@@ -139,13 +157,15 @@ export function compareDatabases({ source, target, allowlist = BOOT_MUTATION_ALL
 
   for (const name of CONTENT_TABLES) {
     if (!sourceTables.has(name) || !targetTables.has(name) || allowedTables.has(name)) continue;
-    const a = contentChecksum(source, name);
-    const b = contentChecksum(target, name);
+    const volatile = allowlist.volatileColumns?.[name] ?? [];
+    const a = contentChecksum(source, name, volatile);
+    const b = contentChecksum(target, name, volatile);
     if (a !== b) {
+      const excluded = volatile.length ? ` (excluding ${volatile.join(', ')})` : '';
       differences.push({
         kind: 'checksum',
         name,
-        detail: `source ${a.slice(0, 12)}, target ${b.slice(0, 12)}`,
+        detail: `source ${a.slice(0, 12)}, target ${b.slice(0, 12)}${excluded}`,
       });
     }
   }

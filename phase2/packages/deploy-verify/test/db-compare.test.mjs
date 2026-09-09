@@ -157,3 +157,46 @@ test('compareDatabases fails when a table exists on only one side', () => {
   assert.equal(result.ok, false);
   assert.ok(result.differences.some((d) => d.kind === 'table-set' && d.name === 'surprise'));
 });
+
+test('contentChecksum ignores columns named as volatile', () => {
+  const a = makeDb();
+  const b = makeDb();
+  b.prepare('UPDATE posts SET published_at = ? WHERE id = ?').run('2099-01-01', 'p1');
+
+  assert.notEqual(contentChecksum(a, 'posts'), contentChecksum(b, 'posts'));
+  assert.equal(
+    contentChecksum(a, 'posts', ['published_at']),
+    contentChecksum(b, 'posts', ['published_at'])
+  );
+});
+
+test('contentChecksum still catches a change outside the volatile columns', () => {
+  const a = makeDb();
+  const b = makeDb();
+  b.prepare('UPDATE posts SET title = ? WHERE id = ?').run('Tampered', 'p1');
+
+  assert.notEqual(
+    contentChecksum(a, 'posts', ['published_at']),
+    contentChecksum(b, 'posts', ['published_at'])
+  );
+});
+
+test('compareDatabases tolerates a volatile column moving, and only that', () => {
+  const source = makeDb();
+  const target = makeDb();
+  target.prepare('UPDATE posts SET published_at = ? WHERE id = ?').run('2099-01-01', 'p1');
+
+  const allowlist = { ...BOOT_MUTATION_ALLOWLIST, volatileColumns: { posts: ['published_at'] } };
+  assert.equal(compareDatabases({ source, target, allowlist }).ok, true);
+
+  // ...but a real content change in the same table still fails, which is the
+  // whole reason this is a column exclusion rather than a table allowlist.
+  target.prepare('UPDATE posts SET title = ? WHERE id = ?').run('Tampered', 'p1');
+  const result = compareDatabases({ source, target, allowlist });
+  assert.equal(result.ok, false);
+  assert.ok(result.differences.some((d) => d.kind === 'checksum' && d.name === 'posts'));
+});
+
+test('the shipped allowlist excludes members.last_seen_at and nothing else', () => {
+  assert.deepEqual(BOOT_MUTATION_ALLOWLIST.volatileColumns, { members: ['last_seen_at'] });
+});
