@@ -95,8 +95,9 @@ if [[ "$VACUUM_DB" == true ]]; then
   LOCAL_DB="$OUT_DIR/${TS}.db"
 
   # Cleanup trap: remove remote temp file on exit, regardless of success or failure.
-  # Use set +e to prevent the cleanup itself from masking the original exit code.
-  trap 'set +e; run_command "rm -f $REMOTE_DB" >/dev/null 2>&1' EXIT
+  # run_command exits on failure; we use || true so the cleanup cannot override
+  # the script's actual exit code with its own.
+  trap 'run_command "rm -f $REMOTE_DB" >/dev/null 2>&1 || true' EXIT
 
   echo "Taking a clean database snapshot with VACUUM INTO..."
   # VACUUM INTO reads the live database and writes a new, fully-checkpointed
@@ -105,11 +106,13 @@ if [[ "$VACUUM_DB" == true ]]; then
   # The command chain uses && so that any step's failure stops the chain;
   # sqlite3 on a missing file creates an empty one and reports `ok`, so a
   # `;` chain cannot distinguish a failed VACUUM from a successful one.
+  # The final PRAGMA integrity_check is checked by its output (ok) not its exit
+  # code, because sqlite3 returns 0 for both "ok" and corruption messages.
   run_command "sudo rm -f $REMOTE_DB && \
     sudo sqlite3 /var/www/ghost/content/data/ghost.db \"VACUUM INTO '$REMOTE_DB'\" && \
     sudo test -s $REMOTE_DB && \
     sudo chmod 644 $REMOTE_DB && \
-    sudo sqlite3 $REMOTE_DB 'PRAGMA integrity_check;'" >/dev/null
+    sudo sqlite3 $REMOTE_DB 'PRAGMA integrity_check;' | grep -qx ok" >/dev/null
 
   echo "Fetching database snapshot..."
   ssm_pull "$REMOTE_DB" "$LOCAL_DB"
