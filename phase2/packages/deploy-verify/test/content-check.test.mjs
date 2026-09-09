@@ -183,6 +183,33 @@ test('checkContent passes when counts match and every image resolves', async () 
   assert.deepEqual(result.missingImages, []);
 });
 
+test('checkContent passes a per-resource filter through to getResourceTotal', async () => {
+  const seenUrls = [];
+  const fetchImpl = async (url) => {
+    seenUrls.push(url);
+    if (url.includes('/posts/?limit=1')) {
+      return { ok: true, status: 200, json: async () => ({ meta: { pagination: { total: 5 } } }) };
+    }
+    if (url.includes('?limit=1')) {
+      return { ok: true, status: 200, json: async () => ({ meta: { pagination: { total: 1 } } }) };
+    }
+    return { ok: true, status: 200, json: async () => ({ posts: [{ id: 'p1', feature_image: null, html: '' }] }) };
+  };
+
+  const result = await checkContent({
+    adminBase: 'https://site/blog/ghost/api/admin',
+    token: 'tok',
+    expected: { posts: 5, users: 1, tags: 1 },
+    imageChecker: async () => true,
+    fetchImpl,
+    filters: { posts: 'status:published+type:post' },
+  });
+
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const postsUrl = seenUrls.find((u) => u.includes('/posts/?limit=1'));
+  assert.ok(postsUrl.includes('filter=status%3Apublished%2Btype%3Apost'), postsUrl);
+});
+
 test('checkContent fails on a count mismatch', async () => {
   const fetchImpl = fakeApi({
     totals: { users: 1, tags: 2 },
@@ -297,6 +324,79 @@ test('checkContent collects a skipped external image separately instead of dropp
   assert.deepEqual(result.skippedExternalImages, [
     { postId: 'p1', url: 'https://cdn.example/x.png' },
   ]);
+  assert.equal(result.imagesChecked, 1);
+});
+
+test('imageUrlToKey throws on a root-relative (non-absolute) URL', () => {
+  assert.throws(() => imageUrlToKey('/blog/content/images/bad-relative.png'), /Invalid URL/);
+});
+
+test('checkContent records an unparseable image URL instead of throwing out of the whole run', async () => {
+  // Regression: imageUrlToKey's `new URL(...)` throws on a root-relative src
+  // (plausible from a hand-authored post, a theme card, or a srcset
+  // candidate). Before the fix that exception propagated out of checkContent
+  // entirely, aborting the whole gate with no post id, no URL, and no
+  // partial results.
+  const fetchImpl = fakeApi({
+    totals: { users: 1, tags: 0 },
+    posts: [
+      {
+        id: 'p1',
+        feature_image: 'https://site/blog/content/images/good.png',
+        html: '<img src="/blog/content/images/bad-relative.png">',
+      },
+    ],
+  });
+
+  const imageChecker = async (url) => {
+    if (url.startsWith('/')) throw new TypeError('Invalid URL');
+    return true;
+  };
+
+  const result = await checkContent({
+    adminBase: 'https://site/blog/ghost/api/admin',
+    token: 'tok',
+    expected: { users: 1, tags: 0 },
+    imageChecker,
+    fetchImpl,
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.unparseableImages, [
+    { postId: 'p1', url: '/blog/content/images/bad-relative.png', error: 'Invalid URL' },
+  ]);
+  // The good image on the same post still got checked -- one bad URL must
+  // not sink the rest of the run's results.
+  assert.equal(result.imagesChecked, 1);
+  assert.deepEqual(result.missingImages, []);
+});
+
+test('checkContent survives a real makeS3ImageChecker hitting a root-relative URL', async () => {
+  const fetchImpl = fakeApi({
+    totals: { users: 1, tags: 0 },
+    posts: [
+      {
+        id: 'p1',
+        feature_image: null,
+        html: '<img src="/blog/content/images/bad-relative.png"><img src="https://site/blog/content/images/good.png">',
+      },
+    ],
+  });
+  const s3Client = { async send() { return {}; } };
+  const imageChecker = makeS3ImageChecker({ bucket: 'data-bucket', s3Client });
+
+  const result = await checkContent({
+    adminBase: 'https://site/blog/ghost/api/admin',
+    token: 'tok',
+    expected: { users: 1, tags: 0 },
+    imageChecker,
+    fetchImpl,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.unparseableImages.length, 1);
+  assert.equal(result.unparseableImages[0].postId, 'p1');
+  assert.equal(result.unparseableImages[0].url, '/blog/content/images/bad-relative.png');
   assert.equal(result.imagesChecked, 1);
 });
 

@@ -76,7 +76,7 @@ export function makeS3ImageChecker({ bucket, s3Client, keyPrefix = 'blog/content
 export function makeHttpImageChecker(fetchImpl = fetch) {
   return async (url) => {
     try {
-      const response = await fetchImpl(url, { method: 'GET' });
+      const response = await fetchImpl(url, { method: 'HEAD' });
       return response.status === 200;
     } catch {
       return false;
@@ -91,11 +91,12 @@ export async function checkContent({
   imageChecker,
   postLimit = 25,
   fetchImpl = fetch,
+  filters = {},
 }) {
   const differences = [];
   for (const resource of ['posts', 'users', 'tags']) {
     if (expected[resource] === undefined) continue;
-    const actual = await getResourceTotal(adminBase, token, resource, fetchImpl);
+    const actual = await getResourceTotal(adminBase, token, resource, fetchImpl, filters[resource]);
     if (actual !== expected[resource]) {
       differences.push({ resource, expected: expected[resource], actual });
     }
@@ -114,12 +115,26 @@ export async function checkContent({
 
   const missingImages = [];
   const skippedExternalImages = [];
+  // A URL an image checker cannot even parse (e.g. imageUrlToKey's `new
+  // URL(...)` on a root-relative src, plausible from a hand-authored post, a
+  // theme card, or a srcset candidate) must not abort the whole run — before
+  // this fix it propagated straight out of checkContent as an uncaught
+  // rejection, printing "validation failed to run: Invalid URL" with no post
+  // id, no URL, and none of the results gathered so far. Recorded here
+  // instead, and failed below like any other real problem.
+  const unparseableImages = [];
   let imagesFound = 0;
   let imagesChecked = 0;
   for (const post of posts) {
     for (const url of extractImageUrls(post)) {
       imagesFound += 1;
-      const result = await imageChecker(url);
+      let result;
+      try {
+        result = await imageChecker(url);
+      } catch (err) {
+        unparseableImages.push({ postId: post.id, url, error: err.message });
+        continue;
+      }
       if (result === 'skipped') {
         skippedExternalImages.push({ postId: post.id, url });
         continue;
@@ -141,10 +156,11 @@ export async function checkContent({
   }
 
   return {
-    ok: differences.length === 0 && missingImages.length === 0,
+    ok: differences.length === 0 && missingImages.length === 0 && unparseableImages.length === 0,
     differences,
     missingImages,
     skippedExternalImages,
+    unparseableImages,
     postsChecked: posts.length,
     imagesChecked,
   };

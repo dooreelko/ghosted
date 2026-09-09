@@ -21,15 +21,43 @@ import { compareDatabases, BOOT_MUTATION_ALLOWLIST } from '../src/db-compare.mjs
 import { generateAdminToken } from '../src/admin-token.mjs';
 import { makeS3ImageChecker, makeHttpImageChecker, checkContent } from '../src/content-check.mjs';
 
+const USAGE =
+  'usage: validate-migration.mjs --source-db <file> --target-db <file> --public-url <url> --bucket <bucket> [--image-check s3|http] [--region <region>]';
+
+const KNOWN_FLAGS = new Set([
+  'source-db',
+  'target-db',
+  'public-url',
+  'bucket',
+  'image-check',
+  'region',
+]);
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 2) {
-    args[argv[i].replace(/^--/, '')] = argv[i + 1];
+    const raw = argv[i];
+    if (!raw.startsWith('--')) {
+      throw new Error(`expected a --flag, got: ${raw}`);
+    }
+    const flag = raw.replace(/^--/, '');
+    if (!KNOWN_FLAGS.has(flag)) {
+      throw new Error(`unknown flag: --${flag}`);
+    }
+    args[flag] = argv[i + 1];
   }
   return args;
 }
 
 async function main() {
+  let parsed;
+  try {
+    parsed = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    console.error(err.message);
+    console.error(USAGE);
+    process.exit(1);
+  }
   const {
     'source-db': sourceDbPath,
     'target-db': targetDbPath,
@@ -37,12 +65,15 @@ async function main() {
     bucket,
     'image-check': imageCheck = 's3',
     region = 'us-east-1',
-  } = parseArgs(process.argv.slice(2));
+  } = parsed;
 
   if (!sourceDbPath || !targetDbPath || !publicUrl || !bucket) {
-    console.error(
-      'usage: validate-migration.mjs --source-db <file> --target-db <file> --public-url <url> --bucket <bucket> [--image-check s3|http]'
-    );
+    console.error(USAGE);
+    process.exit(1);
+  }
+  if (imageCheck !== 's3' && imageCheck !== 'http') {
+    console.error(`--image-check must be "s3" or "http", got: ${imageCheck}`);
+    console.error(USAGE);
     process.exit(1);
   }
   const adminApiKey = process.env.GHOST_ADMIN_API_KEY;
@@ -67,10 +98,23 @@ async function main() {
       }
     }
 
-    // Post counts are covered by the database comparison above: the Admin API's
-    // post total includes drafts, and matching it from SQL would mean
-    // replicating Ghost's exact filter. Users and tags have no such ambiguity.
+    // The Admin API's *unfiltered* post total includes drafts, and matching
+    // it from SQL would mean replicating Ghost's exact filter — that was
+    // rejected. What replaced it: a *filtered* published-post count,
+    // compared against the Admin API rather than skipped. This is the only
+    // comparison in the whole gate that checks what Ghost is actually
+    // serving instead of the store dump — if Ghost failed to restore from
+    // the store and booted a fresh, empty database without ever writing
+    // back, the dump comparison above still equals the source (both are
+    // empty-vs-empty or whatever the store happened to hold), but this count
+    // would not. Ghost 5+ keeps pages in the same `posts` table as posts, so
+    // `type = 'post'` is needed alongside `status = 'published'` or a
+    // published page count would inflate the source side. Users and tags
+    // have no such ambiguity and stay unfiltered.
     expected = {
+      posts: source
+        .prepare("SELECT COUNT(*) AS n FROM posts WHERE status = 'published' AND type = 'post'")
+        .get().n,
       users: source.prepare('SELECT COUNT(*) AS n FROM users').get().n,
       tags: source.prepare('SELECT COUNT(*) AS n FROM tags').get().n,
     };
@@ -99,10 +143,11 @@ async function main() {
     token,
     expected,
     imageChecker,
+    filters: { posts: 'status:published+type:post' },
   });
   if (contentResult.ok) {
     console.log(
-      `ok: user/tag counts match, every image on the recent posts resolves ` +
+      `ok: post/user/tag counts match, every image on the recent posts resolves ` +
         `(checked ${contentResult.postsChecked} posts, ${contentResult.imagesChecked} images)`
     );
   } else {
@@ -111,6 +156,12 @@ async function main() {
     }
     for (const m of contentResult.missingImages) {
       console.log(`MISSING image on post ${m.postId}: ${m.url}`);
+    }
+  }
+  if (contentResult.unparseableImages.length > 0) {
+    console.log('== unparseable image URLs (could not even be checked) ==');
+    for (const u of contentResult.unparseableImages) {
+      console.log(`  UNPARSEABLE on post ${u.postId}: ${u.url} (${u.error})`);
     }
   }
   if (contentResult.skippedExternalImages.length > 0) {

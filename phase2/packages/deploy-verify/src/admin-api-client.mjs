@@ -55,8 +55,17 @@ export async function deletePost(baseUrl, token, id, fetchImpl = fetch) {
   await assertOk(response);
 }
 
-export async function getResourceTotal(baseUrl, token, resource, fetchImpl = fetch) {
-  const response = await fetchImpl(`${baseUrl}/${resource}/?limit=1`, {
+/**
+ * Reads a resource's total count from the Admin API's pagination metadata.
+ * `filter` is an optional Ghost NQL filter string (e.g.
+ * `'status:published+type:post'`, `+` being NQL's AND) applied as-is via
+ * the `filter` query param — pass nothing to get the resource's unfiltered
+ * total.
+ */
+export async function getResourceTotal(baseUrl, token, resource, fetchImpl = fetch, filter) {
+  const qs = new URLSearchParams({ limit: '1' });
+  if (filter) qs.set('filter', filter);
+  const response = await fetchImpl(`${baseUrl}/${resource}/?${qs.toString()}`, {
     headers: authHeaders(token),
   });
   await assertOk(response);

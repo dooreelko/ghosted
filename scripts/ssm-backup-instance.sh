@@ -95,9 +95,13 @@ if [[ "$VACUUM_DB" == true ]]; then
   LOCAL_DB="$OUT_DIR/${TS}.db"
 
   # Cleanup trap: remove remote temp file on exit, regardless of success or failure.
-  # run_command exits on failure; we use || true so the cleanup cannot override
-  # the script's actual exit code with its own.
-  trap 'run_command "rm -f $REMOTE_DB" >/dev/null 2>&1 || true' EXIT
+  # run_command calls `exit 1` internally on failure, and that exit terminates
+  # the script immediately -- the trailing `|| true` never even runs, since
+  # there's no process left to run it in. Left unguarded, a failing cleanup
+  # here would silently override the script's real exit code with 1. Running
+  # it in a subshell contains that: `exit` inside the subshell only ends the
+  # subshell, so `|| true` outside it can actually catch the failure.
+  trap '( run_command "rm -f $REMOTE_DB" ) >/dev/null 2>&1 || true' EXIT
 
   echo "Taking a clean database snapshot with VACUUM INTO..."
   # VACUUM INTO reads the live database and writes a new, fully-checkpointed
@@ -125,7 +129,7 @@ if [[ -n "$SYNC_IMAGES" ]]; then
   # Runs on the instance under the instance role's own credentials, so the
   # ~15MB of images never travel through the SSM base64 channel (which caps
   # out in the low single-digit MB). `s3 sync` is resumable and idempotent.
-  run_command "sudo aws s3 sync /var/www/ghost/content/images '$SYNC_IMAGES' --only-show-errors && echo sync-ok"
+  run_command "sudo aws s3 sync /var/www/ghost/content/images '$SYNC_IMAGES' --region us-east-1 --only-show-errors && echo sync-ok"
 
   echo "Image sync complete."
 fi

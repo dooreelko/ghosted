@@ -27,6 +27,11 @@ variable "marketing_root_oac_id" {
   description = "ID of the CloudFront Origin Access Control on the Phase 1 marketing-root S3 origin (not part of this state). No default -- see .local-secrets.md (\"Phase 2 CloudFront import\" heading) for the value, supplied via the gitignored phase2/iac/phase1.auto.tfvars."
 }
 
+variable "marketing_root_origin_domain" {
+  type        = string
+  description = "S3 website/REST domain_name of the Phase 1 marketing-root origin (e.g. <bucket>.s3.<region>.amazonaws.com). No default -- the bucket name and region must not live in a tracked file. See .local-secrets.md (\"Phase 2 CloudFront import\" heading) for the value, supplied via the gitignored phase2/iac/phase1.auto.tfvars."
+}
+
 variable "site_acm_certificate_arn" {
   type        = string
   description = "ARN of the ACM certificate the site distribution's viewer_certificate uses. No default -- kept out of a name-based data lookup deliberately (most_recent = true risks silently swapping the live certificate) and out of tracked files (the ARN embeds the account ID). See .local-secrets.md (\"Phase 2 CloudFront import\" heading), supplied via the gitignored phase2/iac/phase1.auto.tfvars."

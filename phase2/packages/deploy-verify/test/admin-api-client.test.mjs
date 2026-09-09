@@ -117,6 +117,44 @@ test('getResourceTotal reads the pagination total for a resource', async () => {
   assert.equal(calls[0].options.headers.Authorization, 'Ghost tok');
 });
 
+test('getResourceTotal applies an NQL filter when one is passed', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ posts: [], meta: { pagination: { total: 7 } } }),
+    };
+  };
+
+  const total = await getResourceTotal(
+    'https://x/api/admin',
+    'tok',
+    'posts',
+    fetchImpl,
+    'status:published+type:post'
+  );
+
+  assert.equal(total, 7);
+  assert.equal(
+    calls[0].url,
+    'https://x/api/admin/posts/?limit=1&filter=status%3Apublished%2Btype%3Apost'
+  );
+});
+
+test('getResourceTotal omits the filter param when none is passed', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, json: async () => ({ meta: { pagination: { total: 1 } } }) };
+  };
+
+  await getResourceTotal('https://x/api/admin', 'tok', 'tags', fetchImpl);
+
+  assert.equal(calls[0], 'https://x/api/admin/tags/?limit=1');
+});
+
 test('getResourceTotal throws when the response has no pagination total', async () => {
   const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ posts: [] }) });
 

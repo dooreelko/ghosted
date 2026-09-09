@@ -57,7 +57,12 @@ from the repo root, with real AWS credentials for the account that owns
 directory first — state lives in a versioned S3 bucket, wired through a
 partial backend config: `cd phase2/iac && tofu init -backend-config=backend.hcl`
 (that file is gitignored because the bucket name embeds the account ID;
-recreate it from `.local-secrets.md`). It builds & pushes a new image (git short-SHA
+recreate it from `.local-secrets.md`). `phase2/iac/phase1.auto.tfvars` must
+also exist — every `tofu` invocation in `phase2/iac/` (including this
+script's own `tofu apply` and `build.sh`'s `tofu output`) fails outright
+without it; see `.local-secrets.md` under "Phase 2 CloudFront import (moth
+i8hlt)" for the values and step 0 of the cutover section below for how it's
+built. It builds & pushes a new image (git short-SHA
 tag), applies it via OpenTofu, then independently verifies the live
 deployment (an HTTP smoke test plus a Ghost Admin API create/read/delete
 roundtrip that exercises the real SQLite-over-S3 write path and the
@@ -169,6 +174,28 @@ first boot**, so that any difference between source and result is a real fault
 rather than an expected upgrade artifact. Upgrade Phase 1 first, on its own
 infrastructure, where the upgrade is rehearsed and rollback is at hand.
 
+**Both sides of the cutover must end up on the same Ghost version** — see step
+5 for what that means concretely on the Phase 2 side. The reliable way to get
+there is to pin an exact build rather than taking whatever the npm registry
+currently considers stable: push a tarball and deploy it directly.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+scripts/ssm-backup-instance.sh
+scripts/ssm-scp.sh push <local-tarball> <remote-path>
+scripts/ssm-deploy-ghost-update.sh <remote-path>
+scripts/ssm-copy-admin-build.sh <from-version> <to-version>
+```
+
+`ssm-deploy-ghost-update.sh` installs an archive already sitting on the
+instance via ghost-cli's `--zip` path — it builds nothing itself, so the
+tarball has to be pushed first. That push is chunked base64 with a small
+per-chunk cap, so it's slow for a large tarball. `ssm-copy-admin-build.sh`
+is needed afterward because the admin UI isn't part of that build.
+
+Alternatively, to move onto stock Ghost without pinning a specific version,
+use the mainstream-update route instead:
+
 ```bash
 cd "$(git rev-parse --show-toplevel)"
 scripts/ssm-backup-instance.sh
@@ -183,30 +210,15 @@ requires the scoped sudoers rule from `scripts/ssm-install-ghost-cli-sudoers.sh`
 to already be installed (`ghost update` shells out to `sudo` internally). If
 it needs rolling back, ghost-cli keeps the previous version directory: use
 `ghost rollback` (as `ghostadmin`) or `scripts/ssm-rollback-ghost.sh <version>`.
+This route takes whatever the registry currently resolves to, which is not
+guaranteed to line up with any commit of the `Ghost/` submodule — the pinned
+route above exists specifically so that agreement is a deliberate choice
+instead of a coincidence.
 
-To pin an exact build instead of taking whatever the registry currently
-considers stable, push a tarball and deploy it directly instead of the command
-above:
-
-```bash
-scripts/ssm-scp.sh push <local-tarball> <remote-path>
-scripts/ssm-deploy-ghost-update.sh <remote-path>
-scripts/ssm-copy-admin-build.sh <from-version> <to-version>
-```
-
-`ssm-deploy-ghost-update.sh` installs an archive already sitting on the
-instance via ghost-cli's `--zip` path — it builds nothing itself, so the
-tarball has to be pushed first. That push is chunked base64 with a small
-per-chunk cap, so it's slow for a large tarball. `ssm-copy-admin-build.sh`
-is needed afterward because the admin UI isn't part of that build.
-
-**Both sides of the cutover must end up on the same Ghost version.** Whichever
-route you took, read the version the instance actually landed on — ghost-cli
-reports it, and the live version directory's name under
-`/var/www/ghost/versions/` confirms it — and build the Phase 2 image from
-that same version rather than assuming the fork's `main` and the
-mainstream-update route happened to agree. There's no mechanism here that
-pins this for you; it's a manual check at cutover time. The evidence it
+Whichever route you took, read the version the instance actually landed on —
+ghost-cli reports it, and the live version directory's name under
+`/var/www/ghost/versions/` confirms it. There's no mechanism here that pins
+this for you; it's a manual check at cutover time. The evidence it
 worked is step 6's database comparison: a version skew shows up there as
 schema-level table or checksum differences, not as a clean gate.
 
@@ -214,12 +226,34 @@ Verify the upgraded Phase 1 site is healthy before continuing.
 
 ### 2. Apply the prereqs
 
+`deploy_lightsail` defaults to `false`. On a first run from empty state
+that only means the plan is purely additive (S3 data bucket, ECR
+repository) and nothing below applies. But if the container service has
+already been brought up before (a prior deploy, a prior cutover rehearsal),
+a bare `tofu apply` here **proposes destroying it**:
+`aws_lightsail_container_service.ghost`, its deployment version,
+`aws_iam_role.app_runtime`, its policy, and
+`aws_ecr_repository_policy.lightsail_pull` — because none of those are
+gated to stay up by anything other than the flag you didn't pass. Always
+plan first and read it before applying:
+
 ```bash
 cd phase2/iac
+nix-shell -p opentofu --run 'tofu plan'
+```
+
+If the plan proposes destroying any of the five resources above, stop —
+that is this apply about to tear down a live Lightsail service, not a
+routine no-op. Re-run with `-var deploy_lightsail=true` instead, or
+confirm with whoever owns the environment that the destroy is intended,
+before proceeding:
+
+```bash
 nix-shell -p opentofu --run 'tofu apply'
 ```
 
-With no flags this brings up only the S3 data bucket and the ECR repository.
+With no flags (and nothing already up) this brings up only the S3 data
+bucket and the ECR repository.
 
 ### 3. Final backup — the downtime window starts here
 
@@ -242,11 +276,24 @@ This fails if the store already holds data; it will never overwrite one.
 
 ### 5. Deploy Lightsail
 
+`build.sh` builds the image from the `Ghost/` submodule at whatever commit
+it is currently checked out to — **that submodule pointer, not this repo's
+own commit, is what determines the Phase 2 Ghost version.** Checking out a
+commit of this outer repo does not by itself move `Ghost/`; match the
+version the instance landed on in step 1 by checking the submodule out at
+the corresponding tag and updating it explicitly:
+
 ```bash
 cd "$(git rev-parse --show-toplevel)"
-git checkout <the pinned commit>
+cd Ghost && git checkout <tag matching the version step 1 landed on> && cd ..
+git submodule update
 phase2/scripts/deploy.sh
 ```
+
+As in step 1, there's no mechanism here that pins this for you automatically
+— it's a manual check, and step 6's database comparison is the evidence it
+worked (a version skew shows up there as schema-level table or checksum
+differences, not as a clean gate).
 
 `deploy.sh` passes `deploy_lightsail=true` and never touches
 `deploy_cloudfront`: a routine deploy must not move traffic.
@@ -293,11 +340,56 @@ The `/blog*` behaviours switch to the Lightsail origin and the image behaviour
 is added. The distribution and DNS keep their identity throughout, so this
 takes effect in minutes with no propagation wait.
 
-### 8. Re-validate on the real domain
+If the first images you check in step 9 come back `403`, check whether the
+bucket policy was actually applied before concluding the OAC is
+misconfigured — the distribution update and the bucket policy are separate
+API calls within the one `apply` above, and it's the bucket policy, not the
+OAC, that most often needs a second look.
+
+### 8. Invalidate `/blog*` and wait for it to complete
+
+The `blog/*` behaviours keep their existing cache policy across the origin
+switch in step 7 — CloudFront does not invalidate cached objects just
+because a behaviour's origin changed. Every `/blog/content/images/*` path
+was, until step 7, being served and cached from the EC2 origin, where those
+images exist on disk. Left uninvalidated, step 9's `--image-check http` run
+can get `200`s straight out of Phase-1-populated cache entries while the S3
+origin, the OAC, and the bucket policy are all broken underneath — and the
+visual check can be looking at Phase 1's cached HTML, not anything Phase 2
+actually served. This is the only gate in the whole runbook that runs after
+traffic has moved, so a false pass here is a false pass with nothing left to
+catch it.
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+aws cloudfront create-invalidation \
+  --distribution-id <distribution id, from .local-secrets.md> \
+  --paths '/blog*'
+```
+
+Note the returned invalidation ID, then poll until its `Status` is
+`Completed` before moving on:
+
+```bash
+aws cloudfront get-invalidation \
+  --distribution-id <distribution id, from .local-secrets.md> \
+  --id <invalidation id> \
+  --query 'Invalidation.Status' --output text
+```
+
+**A `200` observed on any `/blog*` path before this invalidation reaches
+`Completed` proves nothing** — it may simply be the old cache entry still
+being served. Do not proceed to step 9 until the status polls `Completed`.
+
+### 9. Re-validate on the real domain
 
 The same command as step 6, with `--image-check http` and the real site URL as
 `--public-url`, so the check exercises CloudFront and the OAC rather than the
-bucket directly.
+bucket directly. Re-running the database comparison here repeats a result you
+already have from step 6 (nothing about the CloudFront cutover changes what
+Ghost booted from the store) — this step's actual value is the HTTP image
+check and the visual check, now that both are finally exercising the real
+CloudFront path instead of the bucket or the Lightsail service URL directly.
 
 ### Rolling back
 
@@ -495,8 +587,8 @@ back — no NAT/VPC config needed.
    (`AWS_EXECUTION_ENV=AWS_ECS_FARGATE`) and get auto-injected credentials
    via `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, but the assumed role
    lives in an **AWS-managed backend account** (confirmed via
-   `sts get-caller-identity`: account `538342414145`, not this project's
-   own account) with zero permissions to our resources by default
+   `sts get-caller-identity`: a distinct AWS-owned account, not this
+   project's own account) with zero permissions to our resources by default
    (`ssm:GetParameter` → `AccessDeniedException`). The resource-access
    route was tried too — Lightsail buckets can be granted to Lightsail
    **instances**, but `set-resource-access-for-bucket` explicitly rejects

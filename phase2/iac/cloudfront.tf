@@ -215,11 +215,15 @@ resource "aws_cloudfront_distribution" "site" {
   }
 
   # Phase 1 marketing-root S3 origin (not part of phase2 state). Its OAC ID
-  # is a no-default variable for the same reason -- see variables.tf.
+  # and its domain_name (which embeds a bucket name and region) are both
+  # no-default variables for the same reason -- see variables.tf. origin_id
+  # is left as the literal it already was: it is not derived from
+  # domain_name, and changing an origin_id would re-create the behaviour
+  # association above and break the empty-plan gate.
   origin {
     connection_attempts      = 3
     connection_timeout       = 10
-    domain_name              = "the-well-architected-cloud.com.s3.eu-central-1.amazonaws.com"
+    domain_name              = var.marketing_root_origin_domain
     origin_access_control_id = var.marketing_root_oac_id
     origin_id                = "the-well-architected-cloud.com.s3.eu-central-1.amazonaws.com-mf4f3dx09q5"
     origin_path              = ""
