@@ -5,6 +5,8 @@ import {
   createDraftPost,
   getPost,
   deletePost,
+  getResourceTotal,
+  listRecentPosts,
 } from '../src/admin-api-client.mjs';
 
 test('uploadImage posts multipart form data and returns the image URL', async () => {
@@ -95,4 +97,49 @@ test('a non-ok response throws with the status and body text', async () => {
     () => getPost('https://x/ghost/api/admin', 'TOKEN', 'post123', fetchImpl),
     /422.*validation failed/s,
   );
+});
+
+test('getResourceTotal reads the pagination total for a resource', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    calls.push({ url, options });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ posts: [], meta: { pagination: { total: 42 } } }),
+    };
+  };
+
+  const total = await getResourceTotal('https://x/api/admin', 'tok', 'posts', fetchImpl);
+
+  assert.equal(total, 42);
+  assert.equal(calls[0].url, 'https://x/api/admin/posts/?limit=1');
+  assert.equal(calls[0].options.headers.Authorization, 'Ghost tok');
+});
+
+test('getResourceTotal throws when the response has no pagination total', async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ posts: [] }) });
+
+  await assert.rejects(
+    () => getResourceTotal('https://x/api/admin', 'tok', 'posts', fetchImpl),
+    /no pagination total/
+  );
+});
+
+test('listRecentPosts requests rendered html and returns the posts', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ posts: [{ id: 'p1', title: 'T', feature_image: null, html: '<p>x</p>' }] }),
+    };
+  };
+
+  const posts = await listRecentPosts('https://x/api/admin', 'tok', 5, fetchImpl);
+
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].html, '<p>x</p>');
+  assert.equal(calls[0], 'https://x/api/admin/posts/?limit=5&formats=html&order=updated_at%20desc');
 });

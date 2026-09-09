@@ -54,3 +54,26 @@ export async function deletePost(baseUrl, token, id, fetchImpl = fetch) {
   });
   await assertOk(response);
 }
+
+export async function getResourceTotal(baseUrl, token, resource, fetchImpl = fetch) {
+  const response = await fetchImpl(`${baseUrl}/${resource}/?limit=1`, {
+    headers: authHeaders(token),
+  });
+  await assertOk(response);
+  const body = await response.json();
+  const total = body?.meta?.pagination?.total;
+  if (typeof total !== 'number') {
+    throw new Error(`Ghost Admin API returned no pagination total for ${resource}`);
+  }
+  return total;
+}
+
+export async function listRecentPosts(baseUrl, token, limit, fetchImpl = fetch) {
+  const response = await fetchImpl(
+    `${baseUrl}/posts/?limit=${limit}&formats=html&order=updated_at%20desc`,
+    { headers: authHeaders(token) }
+  );
+  await assertOk(response);
+  const { posts } = await response.json();
+  return posts;
+}
