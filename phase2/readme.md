@@ -53,7 +53,11 @@ decided then too.
 
 One command, run manually (no CI/cron trigger): `phase2/scripts/deploy.sh`,
 from the repo root, with real AWS credentials for the account that owns
-`phase2/iac/`'s resources. It builds & pushes a new image (git short-SHA
+`phase2/iac/`'s resources. On a fresh checkout, initialize the IaC
+directory first — state lives in a versioned S3 bucket, wired through a
+partial backend config: `cd phase2/iac && tofu init -backend-config=backend.hcl`
+(that file is gitignored because the bucket name embeds the account ID;
+recreate it from `.local-secrets.md`). It builds & pushes a new image (git short-SHA
 tag), applies it via OpenTofu, then independently verifies the live
 deployment (an HTTP smoke test plus a Ghost Admin API create/read/delete
 roundtrip that exercises the real SQLite-over-S3 write path and the
