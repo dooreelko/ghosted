@@ -224,16 +224,30 @@ into a scheduled/automated pipeline later).
    cd Ghost && git checkout <tag or commit on fork_main> && cd ..
    git add Ghost && git commit -m "Ghost: bump to <version>"
    ```
-3. **Deploy**: `phase2/scripts/deploy.sh` (see Deploying above) builds from
-   that pinned commit, applies it, and independently verifies the live
-   deployment before it's considered done — same pipeline, same rollback
-   behavior as any other deploy.
+3. **Deploy**: `phase2/scripts/upgrade.sh` (not `deploy.sh` directly — see
+   below for why) builds from that pinned commit, applies it, and
+   independently verifies the live deployment before it's considered done.
 
-Unlike the one-time migration (which required landing on a Ghost that runs
-**no** schema migrations on boot, so the source/target database comparison
-stayed meaningful), a routine upgrade lets Ghost run its own DB migrations
-on boot as normal — there's no parallel "old" database here to diff
-against.
+**Why a version upgrade needs its own wrapper around `deploy.sh`.** A new
+Ghost version can run a DB migration on boot — unlike the one-time
+migration (which required landing on a Ghost that runs **no** schema
+migrations, so the source/target comparison stayed meaningful), a routine
+upgrade lets Ghost migrate normally. But that means if verification then
+fails, the S3-backed store may already be migrated forward, and
+`deploy.sh`'s own rollback (redeploy the previous image tag) is **not**
+guaranteed to actually fix anything — old code reading new-schema data can
+be just as broken. Unlike the Phase 1→2 migration, there's no untouched
+second copy of the data to fall back to here; the store is the only copy.
+
+`phase2/scripts/upgrade.sh` wraps `deploy.sh` to close that gap: it dumps
+the store to a local backup (`sqlite-s3`'s `bin/dump-to-sqlite.mjs`) before
+deploying, then — only if the site is still unhealthy after `deploy.sh`'s
+own rollback has already run — empties the (now-incompatible) store,
+restores it from that backup, and forces one more restart (via the
+`redeploy` toggle, see Design above) so the previous version ends up
+running against data it actually understands, not data left mid-migrated.
+Use `deploy.sh` directly only for a routine same-version redeploy, which
+never touches the schema and doesn't need any of this.
 
 `@ghost-phase2/sqlite-s3` is a plain `file:` dependency of the launcher
 package (`phase2/packages/ghost-sqlite-s3-launcher/package.json`) — both
