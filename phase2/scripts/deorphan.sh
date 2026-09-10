@@ -5,7 +5,7 @@
 # embeds the account id -- see CLAUDE.md's Sensitive data rule).
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"
 IAC_DIR="$REPO_ROOT/phase2/iac"
 RECLAIM_DIR="$REPO_ROOT/phase2/packages/sqlite-s3"
 
