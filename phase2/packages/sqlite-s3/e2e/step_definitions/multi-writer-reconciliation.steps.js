@@ -9,6 +9,7 @@ import {
   createManifestStore,
   createSegmentStore,
   createCheckpointPolicy,
+  createLeaseStore,
   createS3ObjectStore,
 } from '../../src/index.js';
 
@@ -28,6 +29,7 @@ function s3Config(world) {
       manifestStore: createManifestStore(objectStore),
       segmentStore: createSegmentStore(objectStore),
       checkpointPolicy: createCheckpointPolicy({ maxWalBytes: 50_000_000, maxIntervalMs: 3_600_000 }),
+      leaseStore: createLeaseStore(objectStore),
     };
   }
   return world.sharedS3Config;

@@ -51,6 +51,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     await restoreLocalDb({
       manifest,
       segmentStore: this._s3.segmentStore,
+      leaseStore: this._s3.leaseStore,
       dbPath: this.connectionSettings.filename,
     });
     const connection = await super.acquireRawConnection();
@@ -239,7 +240,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
       ) {
         this._checkpointInFlight = true;
         const CHECKPOINT_COOLDOWN_MS = 30_000;
-        performCheckpoint({ manifestStore: s3.manifestStore, segmentStore: s3.segmentStore })
+        performCheckpoint({ manifestStore: s3.manifestStore, segmentStore: s3.segmentStore, leaseStore: s3.leaseStore })
           .then((result) => {
             if (result.checkpointed) {
               s3.checkpointPolicy.recordCheckpoint();
