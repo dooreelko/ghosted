@@ -78,13 +78,23 @@ it makes goes through the `AssumeRole` hop described below.
 
 ## Cost
 
-**~$12-13/month, confirmed in production.** At design time the total
-depended on whether the S3-backed SQLite reimplementation would actually
-work (fallback: a managed DB, pushing compute+storage+DB alone to ~$26/mo)
-— resolved, see Design above; the managed-DB fallback was never needed.
-Phase 1 baseline for comparison: ~$8.24/mo — Phase 2 costs slightly more
-but removes an EC2 instance, its EBS volume, its Elastic IP, and all OS
-patching.
+**~$12-13/month, confirmed in production — lower than Phase 1's real total
+of ~$15-19/mo** (see `phase1/readme.md`'s Cost estimate: EC2 $7.60 + EBS
+$2.25 + Elastic IP $3.65 + CloudFront $1-5 + VPC-origin data processing
+~$1). Phase 2 drops the EC2 instance, its EBS volume, and its Elastic IP
+entirely (Lightsail needs none of them), and removes the VPC-origin data
+processing charge (CloudFront now reaches Lightsail as a public HTTPS
+origin, no VPC hop) — CloudFront's own request/data cost is unchanged
+either way. At design time the total depended on whether the S3-backed
+SQLite reimplementation would actually work (fallback: a managed DB,
+pushing compute+storage+DB alone to ~$26/mo) — resolved, see Design above;
+the managed-DB fallback was never needed.
+
+(The Cost analysis table below instead baselines against Phase 1's
+compute+storage figure alone, ~$8.24/mo — deliberately narrower, since
+that comparison is choosing between compute *options* and holds
+CloudFront/Route53/the Elastic IP out of scope on both sides rather than
+comparing full totals.)
 
 | Item | Monthly estimate | Notes |
 |---|---|---|
