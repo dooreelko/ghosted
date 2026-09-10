@@ -22,12 +22,12 @@
 # anything to /etc/sudoers.d/ — a malformed rule fails safely, nothing is
 # installed.
 #
-# Usage: scripts/ssm-install-ghost-cli-sudoers.sh
+# Usage: phase1/scripts/ssm-install-ghost-cli-sudoers.sh
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$REPO_ROOT/scripts/ssm-scp.sh" --lib
+source "$REPO_ROOT/phase1/scripts/ssm-scp.sh" --lib
 
 SYSTEMD_UNIT="ghost_the-well-architected-cloud-com"
 

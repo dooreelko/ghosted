@@ -7,12 +7,12 @@
 # versions/ (prior release snapshots) and .pnpm-store/ per its own
 # suggested command.
 #
-# Usage: scripts/ssm-fix-theme-permissions.sh
+# Usage: phase1/scripts/ssm-fix-theme-permissions.sh
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$REPO_ROOT/scripts/ssm-scp.sh" --lib
+source "$REPO_ROOT/phase1/scripts/ssm-scp.sh" --lib
 
 echo "Fixing file permissions under /var/www/ghost (excluding versions/, .pnpm-store/)..."
 run_command "find /var/www/ghost -not -path '*/versions/*' -not -path '*/.pnpm-store/*' -type f -exec chmod 664 {} \\; ; echo DONE"

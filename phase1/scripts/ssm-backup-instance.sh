@@ -23,7 +23,7 @@
 #       live location (no staging copy). Requires the instance role to hold
 #       s3:PutObject/s3:ListBucket on that prefix. Resumable and idempotent.
 #
-# Usage: scripts/ssm-backup-instance.sh [--vacuum-db] [--sync-images S3_URI]
+# Usage: phase1/scripts/ssm-backup-instance.sh [--vacuum-db] [--sync-images S3_URI]
 # Output: .instance-backups/<timestamp>.tgz (gitignored)
 #         .instance-backups/<timestamp>.db   (with --vacuum-db)
 
@@ -63,7 +63,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$REPO_ROOT/scripts/ssm-scp.sh" --lib
+source "$REPO_ROOT/phase1/scripts/ssm-scp.sh" --lib
 
 OUT_DIR="$REPO_ROOT/.instance-backups"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -109,7 +109,7 @@ if [[ "$VACUUM_DB" == true ]]; then
   # single file; it never modifies the source. A plain `cp` of a running
   # Ghost's ghost.db is torn and leaves the WAL behind in a separate file.
   #
-  # The work is done by scripts/remote-vacuum.js, shipped to the instance
+  # The work is done by phase1/scripts/remote-vacuum.js, shipped to the instance
   # base64-encoded so no quoting has to survive both the local shell and the
   # remote one. It runs under Ghost's own vendored better-sqlite3 because the
   # appserver has no sqlite3 CLI (confirmed: `apt-cache policy sqlite3` →
@@ -121,7 +121,7 @@ if [[ "$VACUUM_DB" == true ]]; then
   #
   # The chain uses && so any step's failure stops it: a later step that finds
   # no file must not be able to create an empty one and pronounce it healthy.
-  VACUUM_JS_B64="$(base64 -w0 "$REPO_ROOT/scripts/remote-vacuum.js")"
+  VACUUM_JS_B64="$(base64 -w0 "$REPO_ROOT/phase1/scripts/remote-vacuum.js")"
 
   run_command "sudo rm -f $REMOTE_DB && \
     echo '$VACUUM_JS_B64' | base64 -d > $REMOTE_VACUUM_JS && \

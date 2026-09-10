@@ -18,7 +18,7 @@
 # is read from OpenTofu's own output, so this cannot drift from what the IaC
 # actually created.
 #
-# Usage: scripts/attach-image-sync-policy.sh <instance-role-name>
+# Usage: phase1/scripts/attach-image-sync-policy.sh <instance-role-name>
 
 set -euo pipefail
 

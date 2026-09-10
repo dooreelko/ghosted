@@ -10,23 +10,23 @@
 # patch is no longer needed and the instance can go back to a stock,
 # Ghost-CLI-managed install like any standard deployment.
 #
-# Requires the scoped sudoers rule from scripts/ssm-install-ghost-cli-sudoers.sh
+# Requires the scoped sudoers rule from phase1/scripts/ssm-install-ghost-cli-sudoers.sh
 # to already be installed (ghost update shells out to sudo internally).
 #
-# ALWAYS run scripts/ssm-backup-instance.sh first — this changes the
+# ALWAYS run phase1/scripts/ssm-backup-instance.sh first — this changes the
 # software on a running production instance.
 #
 # Rollback: ghost-cli keeps the previous version directory
 # (/var/www/ghost/versions/6.57.1-local.2) after this update; use
-# `ghost rollback` (as ghostadmin) or scripts/ssm-rollback-ghost.sh
+# `ghost rollback` (as ghostadmin) or phase1/scripts/ssm-rollback-ghost.sh
 # <version> if the mainstream version misbehaves.
 #
-# Usage: scripts/ssm-switch-to-mainstream-ghost.sh
+# Usage: phase1/scripts/ssm-switch-to-mainstream-ghost.sh
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$REPO_ROOT/scripts/ssm-scp.sh" --lib
+source "$REPO_ROOT/phase1/scripts/ssm-scp.sh" --lib
 
 echo "Current version on instance..."
 run_command "sudo -u ghostadmin -H bash -lc 'cd /var/www/ghost && ghost --version' 2>&1"

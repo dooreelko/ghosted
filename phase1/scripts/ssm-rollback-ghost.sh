@@ -8,13 +8,13 @@
 # Does NOT touch the database — only the version symlink and the service.
 # Safe to run repeatedly; a no-op restart if already on the target version.
 #
-# Usage: scripts/ssm-rollback-ghost.sh <version>
-#   e.g. scripts/ssm-rollback-ghost.sh 6.57.1
+# Usage: phase1/scripts/ssm-rollback-ghost.sh <version>
+#   e.g. phase1/scripts/ssm-rollback-ghost.sh 6.57.1
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$REPO_ROOT/scripts/ssm-scp.sh" --lib
+source "$REPO_ROOT/phase1/scripts/ssm-scp.sh" --lib
 
 VERSION="${1:?usage: $0 <version-dir-name-under-/var/www/ghost/versions>}"
 

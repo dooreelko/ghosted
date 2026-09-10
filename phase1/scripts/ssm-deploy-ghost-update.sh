@@ -3,18 +3,18 @@
 # ghost-cli's --zip (--archive) install path, run as ghostadmin (the
 # Ghost-CLI-managed install's owner — running ghost-cli as root is
 # explicitly refused by ghost-cli itself). Requires the scoped sudoers
-# rule from scripts/ssm-install-ghost-cli-sudoers.sh to already be
+# rule from phase1/scripts/ssm-install-ghost-cli-sudoers.sh to already be
 # installed, since `ghost update` shells out to sudo internally (content
 # backup, and critically running the DB migrator as the `ghost` user).
 #
-# Usage: scripts/ssm-deploy-ghost-update.sh /tmp/ghost-<version>.tgz
+# Usage: phase1/scripts/ssm-deploy-ghost-update.sh /tmp/ghost-<version>.tgz
 #   (the path as it exists ON THE INSTANCE, already pushed there —
-#   see scripts/ssm-scp.sh push)
+#   see phase1/scripts/ssm-scp.sh push)
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$REPO_ROOT/scripts/ssm-scp.sh" --lib
+source "$REPO_ROOT/phase1/scripts/ssm-scp.sh" --lib
 
 REMOTE_TGZ="${1:?usage: $0 <remote-tarball-path>}"
 

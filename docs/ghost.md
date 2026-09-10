@@ -16,14 +16,14 @@ for those, referenced here by role/name.
 | SQLite | Ghost's database (posts, members, settings) | `/var/www/ghost/content/data/` |
 | CloudFront | Public entry point for the whole domain (blog + pre-existing static site) | one distribution, two origins |
 | S3 | Existing static site (default/root CloudFront behavior) | pre-existing, not part of the Ghost work |
-| SSM Session Manager | **Only** management path to the instance — no SSH, no bastion, no public IP for admin | `aws ssm start-session` / `scripts/ssm-*.sh` |
+| SSM Session Manager | **Only** management path to the instance — no SSH, no bastion, no public IP for admin | `aws ssm start-session` / `phase1/scripts/ssm-*.sh` |
 | Elastic IP | Instance's outbound path (Proton SMTP + SSM control-plane are both IPv4-only) | see `phase1/readme.md` "Design deviations" |
 
 ## Ghost build
 
 Instance runs **stock Ghost from the npm registry**, deployed via
 ghost-cli's own `ghost update --force`
-(`scripts/ssm-switch-to-mainstream-ghost.sh`). Deployed version as of this
+(`phase1/scripts/ssm-switch-to-mainstream-ghost.sh`). Deployed version as of this
 writing: `6.62.0`.
 
 Previously (2026-08-28 to 2026-09-03) the instance ran a custom fork build
@@ -31,12 +31,12 @@ Previously (2026-08-28 to 2026-09-03) the instance ran a custom fork build
 webfinger self-probe patch, built and deployed per moth `qadpt`. That patch
 was for `syigu` (Social Web); the plan changed and `syigu` will not use the
 custom build, so the instance was switched back to stock via
-`scripts/ssm-switch-to-mainstream-ghost.sh` on 2026-09-03. Ghost-CLI's
+`phase1/scripts/ssm-switch-to-mainstream-ghost.sh` on 2026-09-03. Ghost-CLI's
 update pruned the old `6.57.1-local.2` version dir during the switch — the
 only way back to the custom build now is a fresh rebuild from the fork, or
 the pre-switch instance backup in `.instance-backups/`. The fork submodule
-and build scripts (`scripts/ssm-deploy-ghost-update.sh`,
-`scripts/ssm-copy-admin-build.sh`) are unused going forward unless a future
+and build scripts (`phase1/scripts/ssm-deploy-ghost-update.sh`,
+`phase1/scripts/ssm-copy-admin-build.sh`) are unused going forward unless a future
 patch need reopens moth `qadpt`.
 
 ## nginx — actual config (verified live 2026-08-28)
@@ -108,7 +108,7 @@ the default (S3) behavior. Adding them is the remaining infra work for
   `gfoig`. See `moth show syigu` / `moth show gfoig` for the full
   reasoning.
 - An S3 bucket for large instance file transfers (current chunked-over-SSM
-  approach in `scripts/ssm-scp.sh` works but is slow for anything much
+  approach in `phase1/scripts/ssm-scp.sh` works but is slow for anything much
   bigger than a few MB) is folded into Phase 2's plan rather than designed
   standalone — the S3 bucket already planned there for S3-backed SQLite
   doubles as the migration-transfer path for `content/images/`. See

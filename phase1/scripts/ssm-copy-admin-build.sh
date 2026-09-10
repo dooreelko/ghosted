@@ -7,13 +7,13 @@
 # not required for Ghost to boot, so this can safely run as a follow-up
 # after `ghost update` succeeds rather than being bundled into the deploy.
 #
-# Usage: scripts/ssm-copy-admin-build.sh <from-version> <to-version>
-#   e.g. scripts/ssm-copy-admin-build.sh 6.57.1 6.57.1-local.2
+# Usage: phase1/scripts/ssm-copy-admin-build.sh <from-version> <to-version>
+#   e.g. phase1/scripts/ssm-copy-admin-build.sh 6.57.1 6.57.1-local.2
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-source "$REPO_ROOT/scripts/ssm-scp.sh" --lib
+source "$REPO_ROOT/phase1/scripts/ssm-scp.sh" --lib
 
 FROM="${1:?usage: $0 <from-version> <to-version>}"
 TO="${2:?usage: $0 <from-version> <to-version>}"

@@ -4,11 +4,11 @@
 # `aws ssm send-command`, output for pull, command text for push).
 #
 # Usage:
-#   scripts/ssm-scp.sh pull <remote-path> <local-path>
-#   scripts/ssm-scp.sh push <local-path> <remote-path>
+#   phase1/scripts/ssm-scp.sh pull <remote-path> <local-path>
+#   phase1/scripts/ssm-scp.sh push <local-path> <remote-path>
 #
 # Can be sourced instead of executed: other scripts that need the transfer
-# primitives (not the CLI) can `source scripts/ssm-scp.sh --lib` to get
+# primitives (not the CLI) can `source phase1/scripts/ssm-scp.sh --lib` to get
 # INSTANCE_ID, run_command(), ssm_pull(), and ssm_push() without triggering
 # the CLI dispatch at the bottom.
 
@@ -108,7 +108,7 @@ ssm_push() {
 }
 
 if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
-  # Sourced (e.g. `source scripts/ssm-scp.sh --lib`) — stop here, leave the
+  # Sourced (e.g. `source phase1/scripts/ssm-scp.sh --lib`) — stop here, leave the
   # CLI dispatch below unexecuted so the sourcing script's own $1 is untouched.
   return 0
 fi
