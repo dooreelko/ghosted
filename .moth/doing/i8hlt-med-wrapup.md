@@ -332,3 +332,56 @@ object-store-backed database never lands — see `zwx7x`, which blocks closing
 this ticket. It does not corrupt anything, but the store accumulates
 orphaned data and the boot-time restore grows without bound, so it is now a
 live production concern rather than a theoretical one.
+
+## Blocking zwx7x resolved, and a real end-to-end deploy run executed (2026-09-10)
+
+`zwx7x` (checkpoint race fix, plus a follow-up monitoring ticket `rk2qo`)
+is done — see those tickets for their own decision records. This unblocks
+this ticket's own still-open item from the Implementation section: "a real
+end-to-end run against live infra."
+
+Deploying zwx7x/rk2qo's work required merging `i8hlt-deploy-observability`
+into that work's branch first: this ticket's `phase2/iac/` (with the
+CloudFront cutover state) was the only copy matching what is actually live
+— the other branch, based on `main`, had never seen the cutover and would
+have tried to recreate the whole stack from scratch against the real
+account. Merged cleanly.
+
+**Running `phase2/scripts/deploy.sh` for real, for the first time, found
+two bugs this ticket's own testing section had flagged as an accepted risk
+("verified by being run for real") — both now fixed:**
+
+- The script never passed `deploy_cloudfront=true` to `tofu apply`. That
+  was correct when written (cutover was still a future, separate, explicit
+  apply, and a routine deploy must never move public traffic) but became
+  wrong the moment the cutover actually happened and made `deploy_cloudfront`
+  part of the live, permanent state — every routine deploy since would have
+  tried to revert it to the `false` default. It got partway through
+  destroying the live origin access control before AWS's own
+  `OriginAccessControlInUse` guard rejected the delete — no actual damage,
+  but the failure mode is now closed rather than merely dodged once. This
+  is a **correction to the Migration/cutover decisions section above**, not
+  a new decision: the flag's role changes from "the cutover switch" to
+  "must match already-live state" the instant cutover completes, and the
+  deploy tooling has to track that transition.
+- `deploy-verify`'s Admin API image upload never set a MIME type on the
+  multipart file part, which a real Ghost server rejects — invisible to
+  the unit test's mocked fetch, exactly the gap the design doc predicted
+  ("mocking the cloud would only assert our own assumptions about it").
+
+**Outcome of the real run**: the Lightsail deployment itself succeeded and
+went ACTIVE (the platform's own health check passed) despite the pipeline
+script reporting overall failure — the CloudFront-side bug above caused
+the script's own exit code and message to be misleading ("Lightsail
+rejected the new version," which is not what happened). Verification
+(smoke test + Admin API roundtrip) was then run manually against the live
+service and passed cleanly after the MIME-type fix. This is the first real
+evidence this ticket's verification layer actually works end to end
+against the deployed thing, not just in unit tests.
+
+**Still not done, from the original testing section**: the rollback path
+itself has still never been deliberately exercised for real (only reasoned
+about, and now once accidentally *not* triggered because the underlying
+deployment actually succeeded). Whether to deliberately force a bad deploy
+to exercise it is an open question for whoever decides this ticket is
+complete.
