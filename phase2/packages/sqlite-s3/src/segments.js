@@ -14,5 +14,8 @@ export function createSegmentStore(store) {
       const { meta, bytes } = unpack(encoded);
       return { meta, bytes };
     },
+    async deleteSegment(id) {
+      await store.delete(`segments/${id}.seg`);
+    },
   };
 }
