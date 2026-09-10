@@ -194,6 +194,54 @@ provisioning" section for detail.
 (accepted gap, see design doc). The one-time Phase 1→2 migration/cutover is
 entirely separate, already-completed work — see [`migration.md`](migration.md).
 
+## Upgrade process (new Ghost versions)
+
+This is about pulling in a new upstream Ghost release over time — not the
+Phase 1→2 migration (see [`migration.md`](migration.md) for that one-time
+move). Manual trigger only, no CI/cron (moth `tcho2` tracks turning this
+into a scheduled/automated pipeline later).
+
+1. **Sync + test**: `scripts/sync-ghost.sh` (repo root). Fast-forwards the
+   `Ghost/` submodule's `main` onto `upstream/main` (`TryGhost/Ghost`) and
+   pushes it to the fork's `origin`; merges `main` into `fork_main` (where
+   the sqlite-s3 integration actually gets exercised — `main` itself stays
+   a pure, unmodified mirror) and pushes that too; runs `sqlite-s3`'s own
+   e2e Cucumber suite (real S3, multi-writer reconciliation, fully
+   automated, manages its own throwaway bucket); then runs the `sqlite-s3`
+   smoke test against `fork_main`. The smoke test has a manual "create a
+   post" gate, so this step only completes when run attended — it fails
+   outright (by design, not a bug) if AWS credentials are missing or the
+   run is unattended. Idempotent: safe to re-run for either trigger (new
+   upstream Ghost commits, or a new `sqlite-s3` commit in this repo).
+2. **Pin what actually deploys**: `phase2/docker/build.sh` builds the image
+   from whatever commit `Ghost/` is *currently checked out to* — not
+   automatically the `fork_main` tip step 1 just advanced (recall from
+   `migration.md`: the submodule pointer, not this outer repo's own commit,
+   determines the deployed Ghost version). Once you're satisfied with a
+   synced `fork_main`, check out the exact commit or tag you want to ship
+   and commit the updated submodule pointer:
+   ```bash
+   cd Ghost && git checkout <tag or commit on fork_main> && cd ..
+   git add Ghost && git commit -m "Ghost: bump to <version>"
+   ```
+3. **Deploy**: `phase2/scripts/deploy.sh` (see Deploying above) builds from
+   that pinned commit, applies it, and independently verifies the live
+   deployment before it's considered done — same pipeline, same rollback
+   behavior as any other deploy.
+
+Unlike the one-time migration (which required landing on a Ghost that runs
+**no** schema migrations on boot, so the source/target database comparison
+stayed meaningful), a routine upgrade lets Ghost run its own DB migrations
+on boot as normal — there's no parallel "old" database here to diff
+against.
+
+`@ghost-phase2/sqlite-s3` is a plain `file:` dependency of the launcher
+package (`phase2/packages/ghost-sqlite-s3-launcher/package.json`) — both
+packages live in this same repo checkout, so it always reflects whatever's
+currently in `phase2/packages/sqlite-s3`. No separate pin to update, and
+nothing about a `sqlite-s3` change requires touching the `Ghost/` submodule
+or vice versa.
+
 ## Decisions and rejected alternatives
 
 - **Compute: Lightsail Containers**, not Fargate or ECS-on-EC2/plain
