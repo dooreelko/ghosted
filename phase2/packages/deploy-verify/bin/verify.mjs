@@ -47,6 +47,17 @@ async function main() {
     const image = await uploadImage(adminBase, token, { buffer, filename: 'test-pixel.png' });
     imageUrl = image.url;
 
+    // uploadImage writes directly to S3 under the app's own runtime role --
+    // it proves nothing about whether a public visitor can read the image
+    // back through CloudFront's OAC-gated bucket policy, which is a
+    // separate permission entirely. Fetch the image over its real public
+    // URL to close that gap (see i8hlt: a bucket-policy regression once
+    // broke every image on the site while this roundtrip kept passing).
+    const imageCheck = await checkUrls([imageUrl]);
+    if (!imageCheck.ok) {
+      throw new Error(`uploaded image is not publicly reachable through the CDN: ${JSON.stringify(imageCheck.results)}`);
+    }
+
     const draft = await createDraftPost(adminBase, token, {
       title: `deploy-verify roundtrip ${new Date().toISOString()}`,
       featureImageUrl: imageUrl,
