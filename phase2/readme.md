@@ -78,19 +78,32 @@ it makes goes through the `AssumeRole` hop described below.
 
 ## Cost
 
-**~$11-12/month, confirmed in production**: Lightsail Micro compute $10/mo
-(bundled load balancing + HTTPS included) + ~$1-2/mo S3 for the SQLite-backed
-data store and images. Phase 1 baseline for comparison: ~$8.24/mo — Phase 2
-costs slightly more but removes an EC2 instance, its EBS volume, its Elastic
-IP, and all OS patching. At design time this depended on whether the
-S3-backed SQLite reimplementation would actually work (fallback: a managed
-DB, ~$26/mo) — resolved, see Design above; the managed-DB fallback was never
-needed.
+**~$12-13/month, confirmed in production.** At design time the total
+depended on whether the S3-backed SQLite reimplementation would actually
+work (fallback: a managed DB, pushing compute+storage+DB alone to ~$26/mo)
+— resolved, see Design above; the managed-DB fallback was never needed.
+Phase 1 baseline for comparison: ~$8.24/mo — Phase 2 costs slightly more
+but removes an EC2 instance, its EBS volume, its Elastic IP, and all OS
+patching.
+
+| Item | Monthly estimate | Notes |
+|---|---|---|
+| Lightsail Container Service (Micro) | ~$10.00 | Bundled load balancing + HTTPS included, no separate LB charge |
+| S3 (data bucket: SQLite store + images) | ~$1-2 | Storage + requests at ~2GB content; confirmed live content is 15MB/76 files, well under this |
+| ECR (private image registry) | ~$0.10-0.20 | One image kept at a time; storage-only cost |
+| CloudWatch (3 custom metrics + 3 alarms) | ~$1.20 | 3 metrics × $0.30/mo + 3 alarms × $0.10/mo (moth `rk2qo`) |
+| SNS (alarm email topic) | ~$0 | Well under the 1,000 free email notifications/month |
+| CloudFront (existing distribution, extended) | (pre-existing, not incremental) | Same distribution already serving Phase 1; `/blog*` and image behaviors added, no new distribution |
+| Route53 hosted zone | (pre-existing, not incremental) | Already existed before Phase 1 |
+| **Total (new, incremental)** | **~$12-13/month** | |
+
+## Cost analysis
 
 Compute + storage + DB only in the comparison below — CloudFront, Route53,
-and mail are unchanged by this phase and are excluded. Content+DB size
-assumed ~2GB (personal blog, low image volume; confirmed live content is
-15MB/76 files, well under this).
+and mail are unchanged by this phase and are excluded, matching the Cost
+table's own "pre-existing, not incremental" rows. Content+DB size assumed
+~2GB (personal blog, low image volume; confirmed live content is 15MB/76
+files, well under this).
 
 Baseline (Phase 1, current): t3.micro on-demand ~$7.60/mo + 8GB gp3 EBS
 ~$0.64/mo ≈ **$8.24/mo**.
@@ -99,7 +112,7 @@ Baseline (Phase 1, current): t3.micro on-demand ~$7.60/mo + 8GB gp3 EBS
 |---|---|---|---|---|---|
 | **ECS on EC2** (not chosen) | t3.micro $7.60 (same box, repurposed as ECS container instance) | EBS $0.64 + EFS (2GB, One Zone) $0.32 | $0 — SQLite file lives on EFS, single writer (one Ghost task) | **~$8.56** | Cheapest option, no LB needed, no forced DB service — because the instance keeps a stable private IP CloudFront's VPC origin can target directly |
 | **Fargate** (rejected) | 0.25 vCPU / 0.5GB: $8.99, **plus an NLB, ~$16.50/mo** — required because a Fargate task has no fixed IP, and CloudFront's VPC origin needs one | EFS (2GB) $0.32 | $0 — SQLite-on-EFS | **~$25.81** | The NLB erases essentially all of Fargate's cost advantage |
-| **Lightsail Containers** (chosen) | Micro $10/mo — bundled load balancing + HTTPS included, no separate LB charge | none — Lightsail containers categorically cannot attach a disk or EFS (confirmed platform limit); ephemeral 20GiB/node only | S3-backed SQLite (reimplemented), not a managed DB service | **~$11-12/mo**, confirmed in production (compute $10 + ~$1-2 S3 for DB+images) | No VPC-private origin — accepted tradeoff, see Decisions |
+| **Lightsail Containers** (chosen) | Micro $10/mo — bundled load balancing + HTTPS included, no separate LB charge | none — Lightsail containers categorically cannot attach a disk or EFS (confirmed platform limit); ephemeral 20GiB/node only | S3-backed SQLite (reimplemented), not a managed DB service | **~$11-12/mo** (compute $10 + ~$1-2 S3 for DB+images) — see the Cost table above for the full ~$12-13/mo including ECR/CloudWatch/SNS | No VPC-private origin — accepted tradeoff, see Decisions |
 | **Fargate + RDS MySQL** (reference only) | ~$8.99 | EFS (2GB) $0.32 | RDS `db.t4g.micro`, single-AZ, on-demand: $11.68 compute + $2.30 storage (20GB minimum) ≈ $13.98 | **~$23.29** | Real shared, multi-writer-capable DB — not needed at single-node scale |
 
 Cheapest viable RDS floor (for reference, not chosen): the `~$23.29/mo`
