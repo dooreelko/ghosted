@@ -50,6 +50,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     this._manifest = manifest;
     await restoreLocalDb({
       manifest,
+      manifestStore: this._s3.manifestStore,
       segmentStore: this._s3.segmentStore,
       leaseStore: this._s3.leaseStore,
       dbPath: this.connectionSettings.filename,
