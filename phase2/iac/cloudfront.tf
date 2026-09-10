@@ -27,6 +27,16 @@ data "aws_cloudfront_origin_request_policy" "all_viewer" {
   name = "Managed-AllViewer"
 }
 
+# Same as AllViewer but WITHOUT the Host header. Lightsail's container
+# service routes by Host: handed the site's domain it has no matching
+# service and answers 404, which is exactly how the first cutover attempt
+# took /blog down while images (served from S3, not Lightsail) stayed up.
+# Forwarding Host was right for the Phase 1 EC2 origin, whose nginx keyed on
+# it, and is wrong for this one -- so the policy follows the flag.
+data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
+  name = "Managed-AllViewerExceptHostHeader"
+}
+
 resource "aws_cloudfront_distribution" "site" {
   aliases                         = ["the-well-architected-cloud.com"]
   comment                         = null
@@ -87,7 +97,7 @@ resource "aws_cloudfront_distribution" "site" {
     field_level_encryption_id  = ""
     max_ttl                    = 0
     min_ttl                    = 0
-    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer.id
+    origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
     path_pattern               = "blog/ghost/*"
     realtime_log_config_arn    = ""
     response_headers_policy_id = ""
@@ -111,7 +121,7 @@ resource "aws_cloudfront_distribution" "site" {
     field_level_encryption_id  = ""
     max_ttl                    = 0
     min_ttl                    = 0
-    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer.id
+    origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
     path_pattern               = "blog/members/*"
     realtime_log_config_arn    = ""
     response_headers_policy_id = ""
@@ -150,7 +160,7 @@ resource "aws_cloudfront_distribution" "site" {
     field_level_encryption_id  = ""
     max_ttl                    = 0
     min_ttl                    = 0
-    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer.id
+    origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
     path_pattern               = "blog/*"
     realtime_log_config_arn    = ""
     response_headers_policy_id = ""
@@ -176,7 +186,7 @@ resource "aws_cloudfront_distribution" "site" {
     field_level_encryption_id  = ""
     max_ttl                    = 0
     min_ttl                    = 0
-    origin_request_policy_id   = data.aws_cloudfront_origin_request_policy.all_viewer.id
+    origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
     path_pattern               = "blog"
     realtime_log_config_arn    = ""
     response_headers_policy_id = ""
