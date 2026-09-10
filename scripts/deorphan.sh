@@ -1,0 +1,1 @@
+/home/doo/projects/ghost/phase2/scripts/deorphan.sh
