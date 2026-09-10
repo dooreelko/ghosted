@@ -10,9 +10,26 @@ function authHeaders(token, extra = {}) {
   return { Authorization: `Ghost ${token}`, ...extra };
 }
 
+const IMAGE_MIME_TYPES = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+};
+
+function mimeTypeForFilename(filename) {
+  const ext = filename.slice(filename.lastIndexOf('.') + 1).toLowerCase();
+  return IMAGE_MIME_TYPES[ext] ?? 'application/octet-stream';
+}
+
 export async function uploadImage(baseUrl, token, { buffer, filename }, fetchImpl = fetch) {
   const form = new FormData();
-  form.append('file', new Blob([buffer]), filename);
+  // A real Ghost server rejects a file part with no (or the wrong)
+  // Content-Type as 415 "Please select a valid image" -- Blob's type
+  // defaults to empty unless given explicitly.
+  form.append('file', new Blob([buffer], { type: mimeTypeForFilename(filename) }), filename);
   form.append('purpose', 'image');
 
   const response = await fetchImpl(`${baseUrl}/images/upload/`, {

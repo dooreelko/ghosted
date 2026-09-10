@@ -34,6 +34,23 @@ test('uploadImage posts multipart form data and returns the image URL', async ()
   assert.ok(seen.opts.body instanceof FormData);
 });
 
+test('uploadImage sets a real image MIME type on the uploaded file, not an empty one', async () => {
+  // A real Ghost server rejects a multipart file part with no (or the wrong)
+  // Content-Type as 415 "Please select a valid image" -- this was only ever
+  // caught by a real end-to-end run against live Ghost, never by the mocked
+  // fetch above, which doesn't care what type the Blob claims to be.
+  let seen;
+  const fetchImpl = async (url, opts) => {
+    seen = opts;
+    return { ok: true, status: 201, json: async () => ({ images: [{ url: 'https://x/img.png' }] }) };
+  };
+
+  await uploadImage('https://x/ghost/api/admin', 'TOKEN', { buffer: Buffer.from([1, 2, 3]), filename: 'test-pixel.png' }, fetchImpl);
+
+  const filePart = seen.body.get('file');
+  assert.equal(filePart.type, 'image/png');
+});
+
 test('createDraftPost posts a draft with the feature image and returns its id', async () => {
   let seen;
   const fetchImpl = async (url, opts) => {

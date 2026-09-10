@@ -16,12 +16,17 @@ NEW_TAG="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
 "$REPO_ROOT/phase2/docker/build.sh"
 
 echo "== Step 2/4: tofu apply (image_tag=$NEW_TAG) =="
-# deploy_lightsail=true, and deploy_cloudfront deliberately left at its
-# default false: a routine deploy must never move public traffic. The cutover
-# is a separate, explicit apply (see phase2/readme.md).
-if ! tofu_ "apply -auto-approve -var deploy_lightsail=true -var image_tag=$NEW_TAG"; then
-  echo "DEPLOY FAILED at tofu apply -- Lightsail rejected the new version." >&2
-  echo "The previously ACTIVE deployment is untouched and still serving. No rollback needed." >&2
+# The phase1->phase2 cutover (see phase2/readme.md) already happened and set
+# deploy_cloudfront=true in the real, live state -- omitting it here (as this
+# script originally did, back when cutover was still a future, separate,
+# explicit apply) makes every routine deploy try to revert the live
+# CloudFront cutover back to deploy_cloudfront's `false` default, which very
+# nearly destroyed the in-use origin access control on 2026-09-10. Passing
+# it explicitly here just keeps this apply matching already-live state; it
+# does not re-trigger the cutover itself.
+if ! tofu_ "apply -auto-approve -var deploy_lightsail=true -var deploy_cloudfront=true -var image_tag=$NEW_TAG"; then
+  echo "DEPLOY FAILED at tofu apply." >&2
+  echo "Check the error above -- it may be the Lightsail deployment itself, or an unrelated resource in this same apply. Check 'aws lightsail get-container-service-deployments' for whether a new version actually went ACTIVE despite the reported failure." >&2
   exit 1
 fi
 
@@ -47,7 +52,7 @@ if ! PREVIOUS_TAG="$(echo "$DEPLOYMENTS_JSON" | node "$VERIFY_DIR/bin/previous-t
 fi
 
 echo "== Step 4/4: rolling back to $PREVIOUS_TAG =="
-if ! tofu_ "apply -auto-approve -var deploy_lightsail=true -var image_tag=$PREVIOUS_TAG"; then
+if ! tofu_ "apply -auto-approve -var deploy_lightsail=true -var deploy_cloudfront=true -var image_tag=$PREVIOUS_TAG"; then
   echo "ROLLBACK ALSO FAILED. Manual intervention needed. Currently-live tag is whatever Lightsail last had ACTIVE (check 'aws lightsail get-container-service-deployments')." >&2
   exit 1
 fi
