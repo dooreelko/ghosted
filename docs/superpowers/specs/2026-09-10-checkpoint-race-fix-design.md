@@ -79,8 +79,10 @@ The same `performCheckpoint` call that wins the CAS deletes the old
 gated by the lease check: list current `leases/*`, drop any past their TTL
 (default: 2x the expected worst-case boot time) as stale/crashed, and skip
 deleting a segment if any live lease still references the pre-checkpoint
-generation it belongs to. A skipped reclamation is retried by the next
-successful checkpoint, not retried immediately.
+generation it belongs to. A skipped reclamation is not retried by a later checkpoint — a checkpoint only ever
+knows about the segments it itself superseded. Lease-deferred segments are cleaned up
+by the periodic backlog sweep (`reclaimOrphanedSegments`), which should be run on a
+recurring schedule, not only as the one-time backlog cleanup.
 
 ### 5. One-time backlog cleanup
 

@@ -5,9 +5,6 @@ import { createSegmentStore } from '../src/segments.js';
 import { createLeaseStore } from '../src/leases.js';
 import { reclaimOrphanedSegments } from '../src/reclaim.js';
 
-const SEGMENT_PREFIX = 'segments/';
-const SEGMENT_SUFFIX = '.seg';
-
 async function main() {
   const bucket = process.env.SQLITE_S3_BUCKET;
   if (!bucket) {
@@ -21,23 +18,20 @@ async function main() {
   const segmentStore = createSegmentStore(objectStore);
   const leaseStore = createLeaseStore(objectStore);
 
+  const { scanned, deleted } = await reclaimOrphanedSegments({
+    manifestStore,
+    segmentStore,
+    objectStore,
+    leaseStore,
+    dryRun: !execute,
+  });
+
   if (!execute) {
-    const { manifest } = await manifestStore.read();
-    const reachable = new Set(
-      [manifest?.baseSegmentId, ...(manifest?.walSegmentIds ?? [])].filter(Boolean)
-    );
-    const protectedIds = await leaseStore.listActiveSegmentIds();
-    const allKeys = await objectStore.list(SEGMENT_PREFIX);
-    const orphaned = allKeys.filter((key) => {
-      const id = key.slice(SEGMENT_PREFIX.length, key.length - SEGMENT_SUFFIX.length);
-      return !reachable.has(id) && !protectedIds.has(id);
-    });
-    console.log(`Dry run against bucket "${bucket}": ${orphaned.length} of ${allKeys.length} segments would be deleted.`);
+    console.log(`Dry run against bucket "${bucket}": ${deleted.length} of ${scanned} segments would be deleted.`);
     console.log('Re-run with --execute to actually delete them.');
     return;
   }
 
-  const { scanned, deleted } = await reclaimOrphanedSegments({ manifestStore, segmentStore, objectStore, leaseStore });
   console.log(`Scanned ${scanned} segments in bucket "${bucket}", deleted ${deleted.length} orphans.`);
 }
 

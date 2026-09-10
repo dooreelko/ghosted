@@ -10,6 +10,7 @@ import {
   createSegmentStore,
   createS3ObjectStore,
   createCheckpointPolicy,
+  createLeaseStore,
 } from '@ghost-phase2/sqlite-s3';
 import { findDatabaseInfoPaths, patchDatabaseInfoAt } from './database-info-patch.mjs';
 import { writeCredentialProcessProfile } from './aws-credentials.mjs';
@@ -85,6 +86,7 @@ const s3Config = {
     maxWalBytes: Number(process.env.SQLITE_S3_MAX_WAL_BYTES ?? 50_000_000),
     maxIntervalMs: Number(process.env.SQLITE_S3_MAX_CHECKPOINT_INTERVAL_MS ?? 3_600_000),
   }),
+  leaseStore: createLeaseStore(objectStore),
 };
 
 // The process-wide registry is the reliable path (see knex-client.js) — some

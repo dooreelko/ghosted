@@ -110,6 +110,17 @@ test('list returns only keys matching the prefix', async () => {
   assert.deepEqual(keys.sort(), ['segments/a.seg', 'segments/b.seg']);
 });
 
+test('listWithMetadata returns lastModified close to Date.now() for a freshly-put object', async () => {
+  const store = createInMemoryObjectStore();
+  const before = Date.now();
+  await store.put('segments/a.seg', Buffer.from('a'));
+  const after = Date.now();
+  const entries = await store.listWithMetadata('segments/');
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].key, 'segments/a.seg');
+  assert.ok(entries[0].lastModified >= before && entries[0].lastModified <= after);
+});
+
 test('S3-backed store delete maps a 404 to a no-op', async () => {
   const fakeClient = {
     async send() {
@@ -149,6 +160,36 @@ test('S3-backed store list pages through ListObjectsV2 continuation tokens', asy
   const store = createS3ObjectStore({ bucket: 'test-bucket', client: fakeClient });
   const keys = await store.list('segments/');
   assert.deepEqual(keys, ['segments/a.seg', 'segments/b.seg']);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].ContinuationToken, 'tok-2');
+});
+
+test('S3-backed store listWithMetadata pages through continuation tokens and captures LastModified', async () => {
+  const lastModifiedA = new Date('2026-01-01T00:00:00Z');
+  const lastModifiedB = new Date('2026-01-02T00:00:00Z');
+  const calls = [];
+  const fakeClient = {
+    async send(command) {
+      calls.push(command.input);
+      if (!command.input.ContinuationToken) {
+        return {
+          Contents: [{ Key: 'segments/a.seg', LastModified: lastModifiedA }],
+          IsTruncated: true,
+          NextContinuationToken: 'tok-2',
+        };
+      }
+      return {
+        Contents: [{ Key: 'segments/b.seg', LastModified: lastModifiedB }],
+        IsTruncated: false,
+      };
+    },
+  };
+  const store = createS3ObjectStore({ bucket: 'test-bucket', client: fakeClient });
+  const entries = await store.listWithMetadata('segments/');
+  assert.deepEqual(entries, [
+    { key: 'segments/a.seg', lastModified: lastModifiedA.getTime() },
+    { key: 'segments/b.seg', lastModified: lastModifiedB.getTime() },
+  ]);
   assert.equal(calls.length, 2);
   assert.equal(calls[1].ContinuationToken, 'tok-2');
 });

@@ -14,7 +14,7 @@ function makeError(code, message) {
 }
 
 export function createInMemoryObjectStore() {
-  const objects = new Map(); // key -> { bytes, etag }
+  const objects = new Map(); // key -> { bytes, etag, lastModified }
   return {
     async get(key) {
       const obj = objects.get(key);
@@ -32,14 +32,19 @@ export function createInMemoryObjectStore() {
         }
       }
       const etag = randomUUID();
-      objects.set(key, { bytes: Buffer.from(bytes), etag });
+      objects.set(key, { bytes: Buffer.from(bytes), etag, lastModified: Date.now() });
       return { etag };
     },
     async delete(key) {
       objects.delete(key);
     },
     async list(prefix) {
-      return [...objects.keys()].filter((k) => k.startsWith(prefix));
+      return (await this.listWithMetadata(prefix)).map((entry) => entry.key);
+    },
+    async listWithMetadata(prefix) {
+      return [...objects.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([key, obj]) => ({ key, lastModified: obj.lastModified }));
     },
   };
 }
@@ -92,7 +97,10 @@ export function createS3ObjectStore({ bucket, client = new S3Client({}) }) {
       }
     },
     async list(prefix) {
-      const keys = [];
+      return (await this.listWithMetadata(prefix)).map((entry) => entry.key);
+    },
+    async listWithMetadata(prefix) {
+      const entries = [];
       let continuationToken;
       do {
         const res = await client.send(new ListObjectsV2Command({
@@ -100,10 +108,12 @@ export function createS3ObjectStore({ bucket, client = new S3Client({}) }) {
           Prefix: prefix,
           ContinuationToken: continuationToken,
         }));
-        for (const obj of res.Contents ?? []) keys.push(obj.Key);
+        for (const obj of res.Contents ?? []) {
+          entries.push({ key: obj.Key, lastModified: obj.LastModified?.getTime() });
+        }
         continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
       } while (continuationToken);
-      return keys;
+      return entries;
     },
   };
 }

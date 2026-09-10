@@ -105,7 +105,7 @@ test('performCheckpoint does not reclaim segments a live reader lease still refe
     encodePageImages([{ pageNumber: 1, bytes: Buffer.alloc(pageSize, 0xff) }]),
     { dbSizeAfterCommit: 1 }
   );
-  const { etag } = await manifestStore.write(
+  await manifestStore.write(
     { baseSegmentId, walSegmentIds: [walSegmentId], pageSize },
     { expectedEtag: null }
   );
@@ -159,6 +159,38 @@ test('performCheckpoint retries and abandons after maxRetries under a permanent 
 
   const remaining = await store.list('segments/');
   assert.equal(remaining.length, 1, 'only the original wal segment may remain -- every abandoned attempt\'s base must be deleted');
+});
+
+test('performCheckpoint deletes its merged base and rethrows on a non-conflict manifestStore.write error', async () => {
+  const store = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(store);
+  const realManifestStore = createManifestStore(store);
+  const leaseStore = createLeaseStore(store);
+  const pageSize = 16;
+  const walSegmentId = await segmentStore.putSegment(
+    encodePageImages([{ pageNumber: 1, bytes: Buffer.alloc(pageSize, 0x01) }]),
+    { dbSizeAfterCommit: 1 }
+  );
+  await realManifestStore.write(
+    { baseSegmentId: null, walSegmentIds: [walSegmentId], pageSize },
+    { expectedEtag: null }
+  );
+
+  const boom = new Error('transient network error');
+  const flakyManifestStore = {
+    read: () => realManifestStore.read(),
+    write: async () => {
+      throw boom;
+    },
+  };
+
+  await assert.rejects(
+    () => performCheckpoint({ manifestStore: flakyManifestStore, segmentStore, leaseStore }),
+    (err) => err === boom
+  );
+
+  const remaining = await store.list('segments/');
+  assert.equal(remaining.length, 1, 'only the original wal segment may remain -- the abandoned merged base must be deleted before rethrow');
 });
 
 test('performCheckpoint converges under a real commit landing mid-checkpoint, by folding it in on retry (race repro)', async () => {

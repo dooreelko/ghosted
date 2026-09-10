@@ -24,14 +24,12 @@ export function createCheckpointPolicy({ maxWalBytes, maxIntervalMs, now = () =>
 }
 
 const DEFAULT_MAX_RETRIES = 5;
-const DEFAULT_LEASE_TTL_MS = 5 * 60_000;
 
 export async function performCheckpoint({
   manifestStore,
   segmentStore,
   leaseStore,
   maxRetries = DEFAULT_MAX_RETRIES,
-  leaseTtlMs = DEFAULT_LEASE_TTL_MS,
   now = () => Date.now(),
   onBeforeWrite = async () => {},
 }) {
@@ -77,17 +75,11 @@ export async function performCheckpoint({
 
     try {
       await manifestStore.write(nextManifest, { expectedEtag: baseEtag });
-      await reclaimSuperseded({
-        leaseStore,
-        segmentStore,
-        candidateIds: [...(priorBaseSegmentId ? [priorBaseSegmentId] : []), ...foldedWalIds],
-        now: now(),
-      });
-      return { checkpointed: true };
     } catch (err) {
+      // This attempt lost the race (or hit some other error) -- its merged
+      // base must not leak either way.
+      await segmentStore.deleteSegment(newBaseId).catch(() => {});
       if (err.name !== 'ManifestConflictError') throw err;
-      // This attempt lost the race -- its merged base must not leak.
-      await segmentStore.deleteSegment(newBaseId);
 
       const latestManifest = err.current.manifest;
       if (latestManifest.baseSegmentId !== baseManifest.baseSegmentId) {
@@ -108,7 +100,24 @@ export async function performCheckpoint({
       }
       baseManifest = latestManifest;
       baseEtag = err.current.etag;
+      continue;
     }
+
+    // The manifest CAS succeeded -- this checkpoint IS landed regardless of
+    // what happens next. Reclamation is best-effort cleanup, not part of the
+    // success condition: a failure here must never turn a landed checkpoint
+    // into a thrown error.
+    try {
+      await reclaimSuperseded({
+        leaseStore,
+        segmentStore,
+        candidateIds: [...(priorBaseSegmentId ? [priorBaseSegmentId] : []), ...foldedWalIds],
+        now: now(),
+      });
+    } catch (err) {
+      console.error('sqlite-s3: checkpoint reclamation failed (non-fatal):', err);
+    }
+    return { checkpointed: true };
   }
 
   return { checkpointed: false };

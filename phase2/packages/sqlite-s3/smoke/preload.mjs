@@ -9,6 +9,7 @@ import {
   createSegmentStore,
   createS3ObjectStore,
   createCheckpointPolicy,
+  createLeaseStore,
 } from '../src/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,7 @@ const s3Config = {
   manifestStore: createManifestStore(objectStore),
   segmentStore: createSegmentStore(objectStore),
   checkpointPolicy: createCheckpointPolicy({ maxWalBytes: 50_000_000, maxIntervalMs: 3_600_000 }),
+  leaseStore: createLeaseStore(objectStore),
 };
 
 // The process-wide registry is the reliable path (see knex-client.js) — some
