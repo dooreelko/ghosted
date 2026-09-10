@@ -8,8 +8,8 @@ variable "image_tag" {
 
 variable "deploy_lightsail" {
   type        = bool
-  description = "Bring up the container service, its deployment, and the app-runtime IAM role. With this false only the prereqs (S3 data bucket, ECR repository) exist."
-  default     = false
+  description = "Bring up the container service, its deployment, and the app-runtime IAM role. Defaults true: the Phase 1->2 migration (moth i8hlt) is complete and this is now the live, permanent state. Pass -var deploy_lightsail=false explicitly to get the prereqs-only stage (S3 data bucket, ECR repository) back."
+  default     = true
 }
 
 variable "vpc_origin_id" {
@@ -39,8 +39,8 @@ variable "site_acm_certificate_arn" {
 
 variable "deploy_cloudfront" {
   type        = bool
-  description = "Point the CloudFront /blog* behaviours at Lightsail instead of the Phase 1 EC2 origin, and add the image behaviour. This is the cutover switch."
-  default     = false
+  description = "Point the CloudFront /blog* behaviours at Lightsail instead of the Phase 1 EC2 origin, and add the image behaviour. Was the one-time cutover switch (moth i8hlt, executed 2026-09-10); defaults true now that the cutover is complete and permanent -- every routine apply must keep matching live state (see phase2/readme.md's Design section for the incident this caused once). Pass -var deploy_cloudfront=false explicitly only to roll back to the Phase 1 origin."
+  default     = true
 
   validation {
     # Nothing to point at otherwise. Caught at plan time rather than as a
