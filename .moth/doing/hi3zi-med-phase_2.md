@@ -96,3 +96,40 @@ hands-on Lightsail tests), and sourcing are in `phase2/readme.md`.
   smoke test — covers the credential-path wiring between `vt4m9` and
   `hnj9a` too, since it spans both (IaC creates the role, app code calls
   `AssumeRole`).
+
+
+----- AI agent updates -------
+
+## All three subtasks complete; production-serving since 2026-09-10
+
+`vt4m9`, `hnj9a`, and `i8hlt` are all `done`. The Lightsail/S3-backed-SQLite
+setup this ticket describes is live and serving real traffic at
+the-well-architected-cloud.com/blog, replacing the Phase 1 VM. Full
+architecture, cost, and decision record: `phase2/readme.md`. The one-time
+cutover runbook that was actually executed: `phase2/migration.md`.
+
+**The accepted risk this ticket carried** — whether the S3-backed SQLite
+reimplementation actually plugs into Ghost's Knex/`sqlite3` data layer,
+"not spiked separately — discovered during implementation" — resolved in
+production's favor. It does plug in cleanly (a `knex.Client` subclass
+intercepting commit/restore around a normal local SQLite file); the
+managed-DB fallback was never needed.
+
+**What running it in production actually surfaced, tracked as separate
+tickets rather than reopening this one:**
+- `zwx7x` (done): a checkpoint/compaction race in the S3-backed store that
+  let segments accumulate unboundedly under continuous writes (measured:
+  572MB of garbage against a 3.4MB database after 16 hours of otherwise-idle
+  uptime). Fixed with a bounded-retry checkpoint, reader leases, and a
+  reclamation sweep.
+- `rk2qo` (done): boot-time CloudWatch metrics + alarms added as a direct
+  follow-up, since Lightsail's own logs/metrics couldn't have caught
+  `zwx7x`'s failure mode (a slow leak with no restart) on their own.
+- **24 `techdebt`-prefixed tickets** (filed 2026-09-10, all `ready`): a
+  broad post-hoc gap review of the whole phase2 setup (code, IaC, docs,
+  scripts) turned up 3 `crit`, 9 `high`, and 12 `low` findings — mostly in
+  `phase2/scripts/upgrade.sh`'s untested failure-recovery path (a real
+  production-data-destroying script that has never been exercised against
+  an actual failure), plus doc/reality drift and a few hygiene issues.
+  None of these are blockers to the setup running correctly today; they're
+  the debt incurred getting here.
