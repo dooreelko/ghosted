@@ -420,3 +420,69 @@ check. This is a **correction to the Design decisions section's stated
 verification coverage**, not a new decision — "one write-path roundtrip"
 needed a public-read check alongside it to actually cover what it claimed
 to cover.
+
+
+## Closing the version-upgrade rollback gap, and steady-state IaC defaults (2026-09-10)
+
+**`deploy_lightsail`/`deploy_cloudfront` now default `true`.** They defaulted
+`false` throughout this ticket's own design and the cutover itself
+(deliberately, so a routine apply couldn't move traffic prematurely before
+cutover happened). That protection is now backwards: the cutover is
+permanent, so a bare `tofu plan/apply` with no `-var` overrides should
+reflect live reality by default, not require remembering to pass both
+flags on every invocation. Prereqs-only staging and the Phase 1 rollback
+origin are both still reachable, just via explicit `-var ...=false` now
+instead of being the default. Verified: a bare `tofu plan -var
+image_tag=<current tag>` reports zero drift against real state under the
+new defaults.
+
+**A `redeploy` toggle was added** (`phase2/iac/variables.tf`): a cosmetic
+env var on the container definition that changes only when this bool
+flips, forcing a new Lightsail deployment version (a real restart) with no
+image rebuild and no functional config change. Needed because boot-time
+CloudWatch metrics (`rk2qo`) only publish once per boot — this is the
+cheap way to force a fresh one without a full `deploy.sh` run.
+
+**Found and closed a real gap in this ticket's own rollback design, for
+version upgrades specifically.** The rollback design here assumed
+redeploying the previous image tag is sufficient to recover from a failed
+verification — true for a routine same-version redeploy, but not for a
+Ghost *version* upgrade: a new version can run a DB migration on boot, and
+if verification then fails, the S3-backed store may already be migrated
+forward. Redeploying the old image against now-migrated data is not
+guaranteed to work — old code reading new-schema data can be just as
+broken. Unlike the Phase 1→2 migration itself (where the untouched Phase 1
+instance was always the real fallback), there is no second copy of the
+data here; the store is the only copy.
+
+Resolved with `phase2/scripts/upgrade.sh`, a wrapper around `deploy.sh`
+used only for actual version upgrades (routine redeploys still use
+`deploy.sh` directly, since they never touch the schema): dumps the store
+to a local backup before deploying; if the site is still unhealthy after
+`deploy.sh`'s own rollback has already run, empties the (now-incompatible)
+store, restores it from that backup, and forces one more restart (via the
+`redeploy` toggle above) so the previous version ends up running against
+data it actually understands. Reuses existing tooling throughout
+(`dump-to-sqlite.mjs`, `empty-store.sh`, `seed-from-sqlite.mjs`,
+`deploy-verify`) rather than adding new destructive primitives.
+- Verified live: the active-tag lookup and the backup dump both ran for
+  real against production (read-only checks). The destructive restore
+  path itself has **not** been exercised — would require an actual failing
+  version upgrade to trigger for real, same category of gap this ticket's
+  own Testing section already flagged for the rollback path in general.
+- Rejected: leaving this as a manual runbook step instead of a script —
+  discussed, but the destructive empty+reseed step is exactly the kind of
+  action that should not be improvised under the pressure of a live broken
+  deploy; scripting it (with dump-first, verify-before-and-after) was
+  judged safer than a human doing it freehand in the moment.
+
+**Repo/doc hygiene, incidental to this session's work, not a design
+change:** `phase2/readme.md` gained an architecture diagram
+(`phase2.drawio`/`phase2.png`), a proper "Upgrade process" section
+documenting the routine Ghost-version-upgrade flow above, and a split
+Cost/Cost analysis section. The step-by-step Phase 1→2 cutover runbook
+moved out to its own `phase2/migration.md` (historical, one-time
+execution detail — doesn't apply if starting Phase 2 from scratch
+directly on Lightsail). Phase-1-specific scripts (the `ssm-*.sh` family,
+`remote-vacuum.js`, `attach-image-sync-policy.sh`) moved from `scripts/`
+to `phase1/scripts/`.
