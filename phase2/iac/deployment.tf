@@ -13,6 +13,11 @@ resource "aws_lightsail_container_service_deployment_version" "ghost" {
       AWS_ROLE_ARN        = aws_iam_role.app_runtime[0].arn
       GHOST_URL           = "https://the-well-architected-cloud.com/blog"
       MAIL_SSM_PARAM_NAME = "ghost_imap_token"
+      # Cosmetic -- Ghost/the launcher never reads this. Its only purpose is
+      # to change the container definition when var.redeploy flips, which
+      # forces a new deployment version (and therefore a real container
+      # restart) with no image rebuild and no functional config change.
+      REDEPLOY_MARKER = tostring(var.redeploy)
     }
 
     ports = {

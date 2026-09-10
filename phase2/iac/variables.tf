@@ -12,6 +12,12 @@ variable "deploy_lightsail" {
   default     = true
 }
 
+variable "redeploy" {
+  type        = bool
+  description = "Cosmetic toggle to force a new Lightsail deployment version -- and therefore a real container restart -- without rebuilding the image or changing any functional config. Each transition (false->true or true->false) forces one restart; flip it, apply, then flip it back whenever you just want a fresh boot (e.g. to refresh the boot-time CloudWatch metrics)."
+  default     = false
+}
+
 variable "vpc_origin_id" {
   type        = string
   description = "ID of the CloudFront VPC origin that targets the Phase 1 EC2 appserver. No default -- see .local-secrets.md (\"Phase 2 CloudFront import\" heading) for the value, supplied via the gitignored phase2/iac/phase1.auto.tfvars."
