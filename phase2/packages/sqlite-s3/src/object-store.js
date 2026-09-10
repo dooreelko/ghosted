@@ -3,6 +3,8 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
+  ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 
 function makeError(code, message) {
@@ -32,6 +34,12 @@ export function createInMemoryObjectStore() {
       const etag = randomUUID();
       objects.set(key, { bytes: Buffer.from(bytes), etag });
       return { etag };
+    },
+    async delete(key) {
+      objects.delete(key);
+    },
+    async list(prefix) {
+      return [...objects.keys()].filter((k) => k.startsWith(prefix));
     },
   };
 }
@@ -74,6 +82,28 @@ export function createS3ObjectStore({ bucket, client = new S3Client({}) }) {
         }
         throw err;
       }
+    },
+    async delete(key) {
+      try {
+        await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      } catch (err) {
+        if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) return;
+        throw err;
+      }
+    },
+    async list(prefix) {
+      const keys = [];
+      let continuationToken;
+      do {
+        const res = await client.send(new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }));
+        for (const obj of res.Contents ?? []) keys.push(obj.Key);
+        continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+      } while (continuationToken);
+      return keys;
     },
   };
 }
