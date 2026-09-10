@@ -15,8 +15,9 @@ in pkgs.mkShellNoCC {
       pkgs.drawio
       pkgs.sqlite
       pkgs.opentofu
-
-	  moth
+      pkgs.shellcheck
+	  
+      moth
    ];
  }
 

@@ -160,9 +160,6 @@ config.set('server:host', '0.0.0.0');
 console.error('[boot] server:host config set to 0.0.0.0');
 
 config.set('storage:active', 'S3Storage');
-config.set(
-  'storage:S3Storage',
-  buildS3StorageConfig({ bucket, region, cdnUrl: `https://${bucket}.s3.${region}.amazonaws.com` })
-);
+config.set('storage:S3Storage', buildS3StorageConfig({ bucket, region, ghostUrl }));
 console.error('[boot] storage config set');
 console.error('[boot] preload.mjs complete, handing off to index.js');
