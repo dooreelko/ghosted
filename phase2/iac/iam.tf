@@ -65,6 +65,15 @@ data "aws_iam_policy_document" "app_runtime_permissions" {
     # .local-secrets.md.
     resources = [data.aws_kms_alias.ssm_default.target_key_arn]
   }
+
+  statement {
+    sid    = "PublishBootMetrics"
+    effect = "Allow"
+    # cloudwatch:PutMetricData does not support resource-level scoping
+    # (AWS limitation, not a scoping choice here) -- Resource must be "*".
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "app_runtime_permissions" {
