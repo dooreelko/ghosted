@@ -234,35 +234,101 @@ rollback target), reintroducing any Ghost source patch, steady-state
 monitoring, and any DNS or certificate change.
 
 
-## Implementation outcome (migration/cutover half)
+## Decisions forced by executing the cutover (2026-09-10)
 
-Built, reviewed and committed on `i8hlt-deploy-observability`. Nine units of
-work: the image key layout in the launcher; the staged IaC flags; the CDN
-distribution brought under phase 2 state; the backup extension; the store
-seeder and its inverse; the database comparison; the content check and the
-operator gate; the runbook. 137 unit tests pass across the three packages.
+The cutover was performed. What follows are decisions that only became
+visible by running it against the real systems; each corrects or extends a
+decision above rather than replacing the feature.
 
-**What the reviews changed, and why it matters.** Three separate defects would
-each have let the validation gate report success while content was missing —
-a gate that checked no posts, a gate that skipped every image because it
-compared hosts that differ by design before cutover, and a comparison that
-checks the migrated store against its own source rather than against what the
-application is actually serving. All three are fixed and have tests that fail
-without the fix. A fourth would have shipped an empty database as a good
-snapshot: the remote snapshot chain reported the status of its last command,
-and that command created and blessed an empty file when the real work had
-already failed. The content checksum was also rewritten because its ad-hoc
-encoding could not distinguish two genuinely different rows.
+**Version alignment is achieved by pinning the new system DOWN to the old
+one's version, not by upgrading the old one first.** The requirement is
+unchanged — the migrated database must boot with no schema migrations, so
+that any difference the validation reports is a real fault. But the earlier
+decision assumed a stale source. In fact the source was one release behind
+current, while the fork's mainline carried a *prerelease* version number, so
+building from mainline would have put a release candidate into production.
+Pinning the new build to the version the source already runs satisfies the
+requirement with no production upgrade in the cutover window at all.
+- Rejected: upgrading the source first (the earlier decision) — buys being
+  current at the cost of a production upgrade inside the window, and would
+  have shipped a prerelease.
+- Consequence, accepted: the site is one release behind on cutover day.
+  Upgrading afterwards is ordinary maintenance, no longer migration work.
 
-**Still to do, and deliberately not done here**: the cutover itself. Every
-step of it runs against live production — the instance upgrade, the final
-backup, the seeding, the CDN flip — and the runbook is written for a person
-to execute with the gates in front of them. Two facts in it are load-bearing:
-the downtime window opens at the final backup, not at the flip; and rolling
-back after the flip discards anything written since.
+**Uploaded themes are content and must be carried across; they are baked
+into the image.** The backup's original scope called themes "software,
+reinstallable". That holds for the themes the platform ships (they are
+symlinks into its own install) and is false for any theme uploaded through
+the admin panel, which exists only as a directory in the source's content.
+The database names an active theme and the app refuses to render the
+frontend when it is absent: the first migrated boot served the admin panel
+correctly and returned an error page to every visitor.
+- Rejected: restoring themes from object storage at boot — consistent with
+  how the database is handled, but adds a failure mode to the boot path.
+- Rejected: switching the site to a shipped theme — changes how the site
+  looks to avoid solving the problem.
+- Consequence, accepted: a theme uploaded through the admin panel afterwards
+  lives only in that container and is lost on the next deploy. Changing
+  themes is now a commit-and-rebuild.
 
-**Known limits, accepted**: the allowlist of what may differ on boot ships
-empty by design and is populated from an observed boot during the run itself;
-the image check covers recent posts rather than the whole archive; and a
-rehearsal against a scratch bucket before the real cutover is recommended
-precisely because it moves the allowlist work outside the downtime window.
+**The CDN must not forward the Host header to the container origin.** The
+container platform routes by Host; given the site's own domain it matches no
+service and returns 404. Forwarding Host was correct for the old VM origin,
+whose reverse proxy keyed on it, and became wrong the instant the behaviours
+moved. This took the blog down for several minutes during the cutover, with
+images (served from object storage, not the container) still fine — the
+asymmetry is the diagnostic. The origin-request policy therefore follows the
+cutover flag, so each origin gets the treatment it needs.
+
+**The snapshot tool must not assume a database CLI on the source host.** The
+source had none, and installing a package on a production instance merely to
+take a backup is the worse trade: the snapshot is taken through the database
+library the application itself already vendors, which is present by
+definition. The integrity check must assert its *output*, since it reports
+corruption as result rows while still succeeding as a query.
+
+**Anything crossing the constrained management channel is compressed
+first.** That channel carries payload as text in command output, chunked, so
+cost is linear in size — a database that compresses well should not be sent
+raw. (The chunked transfer also had a latent defect that only appears past a
+certain size; it now pins the chunk-naming width on both sides.)
+
+**Emptying the store is an explicit act, and it gets a tool.** The seeder
+refuses to overwrite an existing store and has no force flag, deliberately.
+The runbook then told the operator to empty it and offered nothing to do it
+with, which under time pressure means hand-deleting objects from a bucket
+that also holds the migrated images. The tool defaults to a dry run and
+never touches images.
+
+**The boot-mutation allowlist needs column granularity, not just table and
+setting granularity.** Observed: exactly one column of one row moved on
+boot — an activity timestamp the app stamps when it sees a visitor.
+Allowlisting that whole table would have exempted the audience list from
+comparison entirely, so losing members would go undetected. Naming the
+volatile column keeps every other field of every row under the checksum.
+- Consequence: like the settings allowlist, entries are added only from an
+  observed boot, each with a note saying what moved and why it is not
+  content.
+
+**Create the deploy-verification integration on the SOURCE system before
+the final snapshot.** Its credentials live in the database, so an
+integration created on the new system is destroyed by the next re-seed.
+Created on the source, it migrates across and the deploy pipeline works
+from the first deploy. A further reason: the admin panel refuses browser
+logins whose origin does not match the configured site URL, so the new
+system's admin panel is not reachable by hostname before cutover anyway.
+
+## Outcome
+
+Executed end to end on 2026-09-10. The migrated database booted on the
+object-store-backed database and served the real site; validation passed
+both before the traffic move (checking images directly in the bucket) and
+after it (checking them over HTTP through the CDN); no content was lost, the
+source's counts and timestamps being identical to the snapshot at flip time.
+The old instance is kept as the rollback target.
+
+**Known, accepted, and tracked elsewhere**: checkpointing in the
+object-store-backed database never lands — see `zwx7x`, which blocks closing
+this ticket. It does not corrupt anything, but the store accumulates
+orphaned data and the boot-time restore grows without bound, so it is now a
+live production concern rather than a theoretical one.
