@@ -385,3 +385,38 @@ about, and now once accidentally *not* triggered because the underlying
 deployment actually succeeded). Whether to deliberately force a bad deploy
 to exercise it is an open question for whoever decides this ticket is
 complete.
+
+
+## Incident: the real deploy run broke every image on the site (2026-09-10)
+
+Direct consequence of the `deploy_cloudfront=true` bug recorded above.
+Before that bug was fixed, the real `deploy.sh` run got far enough into
+its flawed `tofu apply` to actually delete `aws_s3_bucket_policy.data_cloudfront_read`
+— the policy that lets CloudFront's origin access control read the images
+bucket. The sibling `aws_cloudfront_origin_access_control` resource
+survived only because AWS itself refused that specific delete
+(`OriginAccessControlInUse`, since the distribution still referenced it);
+the bucket policy had no equivalent protection and was removed cleanly.
+Every image on the live site started returning 403 from that point,
+silently — the deploy pipeline's own verification step never ran against
+this deployment (it errored out earlier, on the unrelated OAC failure),
+so nothing caught it. Found only because a user noticed a broken image
+and reported it. Fixed with a second, targeted `tofu apply` restoring
+just that one policy (confirmed via plan: 1 to add, 0 to change, 0 to
+destroy) — full image serving confirmed restored within minutes.
+
+**This also exposed a real design gap in the verification layer itself,
+not just the one-off deploy.sh bug.** The Design decisions section above
+says the roundtrip "exercises... S3-backed image storage" — true only for
+the *write* path: `uploadImage` writes directly to S3 under the app's own
+runtime role, which needs no CloudFront/OAC/bucket-policy permission at
+all. Nothing in the roundtrip ever fetched the uploaded image over its
+real public URL, so a regression that breaks only the CloudFront *read*
+path (exactly this incident) was structurally invisible to it — the
+roundtrip would have kept reporting `{"ok":true}` throughout the outage.
+Fixed: the roundtrip now fetches the uploaded image's real URL through the
+CDN and fails if it isn't a 200, before proceeding to the rest of the
+check. This is a **correction to the Design decisions section's stated
+verification coverage**, not a new decision — "one write-path roundtrip"
+needed a public-read check alongside it to actually cover what it claimed
+to cover.
