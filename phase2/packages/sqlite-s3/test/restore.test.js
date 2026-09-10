@@ -6,6 +6,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { createInMemoryObjectStore } from '../src/object-store.js';
 import { createSegmentStore } from '../src/segments.js';
+import { createLeaseStore } from '../src/leases.js';
 import { restoreLocalDb } from '../src/restore.js';
 import { parseWalHeader, parseFrames } from '../src/wal.js';
 import { extractPageImages, encodePageImages, decodePageImages } from '../src/page-images.js';
@@ -28,8 +29,10 @@ async function walFileToPageImageSegment(walPath) {
 
 test('restoreLocalDb with a null manifest leaves no files (fresh db)', async () => {
   const dbPath = await tmpPath('fresh.db');
-  const segmentStore = createSegmentStore(createInMemoryObjectStore());
-  await restoreLocalDb({ manifest: null, segmentStore, dbPath });
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
+  await restoreLocalDb({ manifest: null, segmentStore, leaseStore, dbPath });
   await assert.rejects(() => stat(dbPath));
 });
 
@@ -43,13 +46,15 @@ test('restoreLocalDb rebuilds a real, openable database from a base segment plus
   const { payload, pageSize, dbSizeAfterCommit } = await walFileToPageImageSegment(`${sourcePath}-wal`);
   db.close();
 
-  const segmentStore = createSegmentStore(createInMemoryObjectStore());
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
   const baseSegmentId = await segmentStore.putSegment(baseBytes);
   const walSegmentId = await segmentStore.putSegment(payload, { dbSizeAfterCommit });
   const manifest = { baseSegmentId, walSegmentIds: [walSegmentId], pageSize };
 
   const restoredPath = await tmpPath('restored.db');
-  await restoreLocalDb({ manifest, segmentStore, dbPath: restoredPath });
+  await restoreLocalDb({ manifest, segmentStore, leaseStore, dbPath: restoredPath });
 
   const restored = new Database(restoredPath);
   const row = restored.prepare('SELECT v FROM t WHERE id = 1').get();
@@ -66,12 +71,14 @@ test('restoreLocalDb rebuilds a real, openable database from wal segments alone 
   const { payload, pageSize, dbSizeAfterCommit } = await walFileToPageImageSegment(`${sourcePath}-wal`);
   db.close();
 
-  const segmentStore = createSegmentStore(createInMemoryObjectStore());
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
   const walSegmentId = await segmentStore.putSegment(payload, { dbSizeAfterCommit });
   const manifest = { baseSegmentId: null, walSegmentIds: [walSegmentId], pageSize };
 
   const restoredPath = await tmpPath('restored-nobase.db');
-  await restoreLocalDb({ manifest, segmentStore, dbPath: restoredPath });
+  await restoreLocalDb({ manifest, segmentStore, leaseStore, dbPath: restoredPath });
 
   const restored = new Database(restoredPath);
   const row = restored.prepare('SELECT v FROM t WHERE id = 1').get();
@@ -96,13 +103,16 @@ test('restoreLocalDb composes segments from two independent writers (C2 regressi
   // for writer B to insert into it) and added a second row. Simulate this by
   // restoring base+segA into a fresh file via restoreLocalDb itself (already
   // verified correct by the earlier tests), then writing through it.
-  const preSegmentStore = createSegmentStore(createInMemoryObjectStore());
+  const preObjectStore = createInMemoryObjectStore();
+  const preSegmentStore = createSegmentStore(preObjectStore);
+  const preLeaseStore = createLeaseStore(preObjectStore);
   const preBaseSegmentId = await preSegmentStore.putSegment(baseBytes);
   const preSegAId = await preSegmentStore.putSegment(segA.payload, { dbSizeAfterCommit: segA.dbSizeAfterCommit });
   const writerBPath = await tmpPath('writerB.db');
   await restoreLocalDb({
     manifest: { baseSegmentId: preBaseSegmentId, walSegmentIds: [preSegAId], pageSize: segA.pageSize },
     segmentStore: preSegmentStore,
+    leaseStore: preLeaseStore,
     dbPath: writerBPath,
   });
   const dbB = new Database(writerBPath);
@@ -112,7 +122,9 @@ test('restoreLocalDb composes segments from two independent writers (C2 regressi
   dbB.close();
 
   // Both writers' segments land in one shared manifest, in commit order.
-  const segmentStore = createSegmentStore(createInMemoryObjectStore());
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
   const baseSegmentId = await segmentStore.putSegment(baseBytes);
   const segAId = await segmentStore.putSegment(segA.payload, { dbSizeAfterCommit: segA.dbSizeAfterCommit });
   const segBId = await segmentStore.putSegment(segB.payload, { dbSizeAfterCommit: segB.dbSizeAfterCommit });
@@ -123,7 +135,7 @@ test('restoreLocalDb composes segments from two independent writers (C2 regressi
   };
 
   const restoredPath = await tmpPath('restored-multiwriter.db');
-  await restoreLocalDb({ manifest, segmentStore, dbPath: restoredPath });
+  await restoreLocalDb({ manifest, segmentStore, leaseStore, dbPath: restoredPath });
 
   const restored = new Database(restoredPath);
   const rows = restored.prepare('SELECT v FROM t ORDER BY id').all();
@@ -191,7 +203,9 @@ test('restoreLocalDb truncates to the MAXIMUM dbSizeAfterCommit across all segme
   // this is exactly the ordering that breaks a naive "last segment wins"
   // truncation rule, since it would truncate the restored file down to B's
   // smaller page count and discard every page A added.
-  const segmentStore = createSegmentStore(createInMemoryObjectStore());
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
   const baseSegmentId = await segmentStore.putSegment(baseBytes);
   const segAId = await segmentStore.putSegment(segA.payload, { dbSizeAfterCommit: segA.dbSizeAfterCommit });
   const segBId = await segmentStore.putSegment(segB.payload, { dbSizeAfterCommit: segB.dbSizeAfterCommit });
@@ -202,7 +216,7 @@ test('restoreLocalDb truncates to the MAXIMUM dbSizeAfterCommit across all segme
   };
 
   const restoredPath = await tmpPath('ca-restored.db');
-  await restoreLocalDb({ manifest, segmentStore, dbPath: restoredPath });
+  await restoreLocalDb({ manifest, segmentStore, leaseStore, dbPath: restoredPath });
 
   const restored = new Database(restoredPath);
   const integrity = restored.pragma('integrity_check');
@@ -218,13 +232,15 @@ test('restoreLocalDb truncates to the MAXIMUM dbSizeAfterCommit across all segme
 });
 
 test('restoreLocalDb throws a clear error when wal segments exist but manifest.pageSize is missing (I-B)', async () => {
-  const segmentStore = createSegmentStore(createInMemoryObjectStore());
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
   const walSegmentId = await segmentStore.putSegment(Buffer.from('irrelevant'), { dbSizeAfterCommit: 1 });
   const manifest = { baseSegmentId: null, walSegmentIds: [walSegmentId], pageSize: undefined };
 
   const restoredPath = await tmpPath('missing-pagesize.db');
   await assert.rejects(
-    () => restoreLocalDb({ manifest, segmentStore, dbPath: restoredPath }),
+    () => restoreLocalDb({ manifest, segmentStore, leaseStore, dbPath: restoredPath }),
     /manifest\.pageSize is missing or invalid/
   );
 });
@@ -242,13 +258,49 @@ test('restoreLocalDb throws a clear error when manifest.pageSize disagrees with 
   // default). Deliberately record a different pageSize in the manifest.
   const wrongPageSize = 8192;
 
-  const segmentStore = createSegmentStore(createInMemoryObjectStore());
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
   const baseSegmentId = await segmentStore.putSegment(baseBytes);
   const manifest = { baseSegmentId, walSegmentIds: [], pageSize: wrongPageSize };
 
   const restoredPath = await tmpPath('mismatch-restored.db');
   await assert.rejects(
-    () => restoreLocalDb({ manifest, segmentStore, dbPath: restoredPath }),
+    () => restoreLocalDb({ manifest, segmentStore, leaseStore, dbPath: restoredPath }),
     /does not match the base segment's own page size/
   );
+});
+
+test('restoreLocalDb acquires a lease for the duration of the restore and releases it after', async () => {
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
+  const pageSize = 16;
+  const baseSegmentId = await segmentStore.putSegment(Buffer.alloc(pageSize, 0x00));
+  const manifest = { baseSegmentId, walSegmentIds: [], pageSize };
+
+  let activeDuringRestore;
+  const originalGetSegment = segmentStore.getSegment.bind(segmentStore);
+  segmentStore.getSegment = async (id) => {
+    activeDuringRestore = await leaseStore.listActiveSegmentIds();
+    return originalGetSegment(id);
+  };
+
+  const dbPath = await tmpPath('lease-check.db');
+  await restoreLocalDb({ manifest, segmentStore, leaseStore, dbPath });
+
+  assert.ok(activeDuringRestore.has(baseSegmentId), 'a lease must be active while segments are being fetched');
+  assert.equal((await leaseStore.listActiveSegmentIds()).size, 0, 'the lease must be released once restore completes');
+});
+
+test('restoreLocalDb releases its lease even when the merge throws (I-B)', async () => {
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
+  const walSegmentId = await segmentStore.putSegment(Buffer.from('irrelevant'), { dbSizeAfterCommit: 1 });
+  const manifest = { baseSegmentId: null, walSegmentIds: [walSegmentId], pageSize: undefined };
+
+  const dbPath = await tmpPath('lease-release-on-error.db');
+  await assert.rejects(() => restoreLocalDb({ manifest, segmentStore, leaseStore, dbPath }));
+  assert.equal((await leaseStore.listActiveSegmentIds()).size, 0, 'a failed restore must not leak its lease');
 });
