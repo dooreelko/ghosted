@@ -34,8 +34,26 @@ test('restoreLocalDb with a null manifest leaves no files (fresh db)', async () 
   const segmentStore = createSegmentStore(objectStore);
   const leaseStore = createLeaseStore(objectStore);
   const manifestStore = createManifestStore(objectStore);
-  await restoreLocalDb({ manifest: null, manifestStore, segmentStore, leaseStore, dbPath });
+  const result = await restoreLocalDb({ manifest: null, manifestStore, segmentStore, leaseStore, dbPath });
   await assert.rejects(() => stat(dbPath));
+  assert.deepEqual(result, { attempts: 0, durationMs: 0 }, 'a fresh db never actually fetched anything');
+});
+
+test('restoreLocalDb reports attempts and durationMs on a successful restore', async () => {
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
+  const manifestStore = createManifestStore(objectStore);
+  const pageSize = 16;
+  const baseSegmentId = await segmentStore.putSegment(Buffer.alloc(pageSize, 0x00));
+  const manifest = { baseSegmentId, walSegmentIds: [], pageSize };
+
+  const dbPath = await tmpPath('reports-stats.db');
+  const result = await restoreLocalDb({ manifest, manifestStore, segmentStore, leaseStore, dbPath });
+
+  assert.equal(result.attempts, 1, 'a restore that succeeds on its first try took exactly 1 attempt');
+  assert.equal(typeof result.durationMs, 'number');
+  assert.ok(result.durationMs >= 0);
 });
 
 test('restoreLocalDb rebuilds a real, openable database from a base segment plus a wal segment', async () => {
@@ -340,7 +358,8 @@ test('restoreLocalDb recovers from a segment reclaimed between the caller\'s man
   await segmentStore.deleteSegment(staleBaseId);
 
   const dbPath = await tmpPath('recovered.db');
-  await restoreLocalDb({ manifest: staleManifest, manifestStore, segmentStore, leaseStore, dbPath });
+  const result = await restoreLocalDb({ manifest: staleManifest, manifestStore, segmentStore, leaseStore, dbPath });
+  assert.equal(result.attempts, 2, 'must report that it took a second attempt to recover');
 
   const restoredBytes = await readFile(dbPath);
   assert.ok(restoredBytes.every((b) => b === 0xbb), 'must have recovered by re-reading and restoring from the fresh manifest');

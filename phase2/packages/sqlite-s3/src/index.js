@@ -5,3 +5,4 @@ export { createLeaseStore } from './leases.js';
 export { createCheckpointPolicy, performCheckpoint } from './checkpoint.js';
 export { createInMemoryObjectStore, createS3ObjectStore } from './object-store.js';
 export { restoreLocalDb } from './restore.js';
+export { reclaimOrphanedSegments } from './reclaim.js';

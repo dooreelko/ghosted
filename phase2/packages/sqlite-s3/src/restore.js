@@ -19,9 +19,10 @@ export async function restoreLocalDb({
   let currentManifest = manifest;
   const hasWalSegments = currentManifest && currentManifest.walSegmentIds && currentManifest.walSegmentIds.length > 0;
   if (!currentManifest || (!currentManifest.baseSegmentId && !hasWalSegments)) {
-    return; // truly nothing to restore — a fresh database
+    return { attempts: 0, durationMs: 0 }; // truly nothing to restore — a fresh database
   }
 
+  const startedAt = Date.now();
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     // A concurrent checkpoint can reclaim segments this manifest references
     // the moment it wins its own CAS. Holding a lease for the duration of the
@@ -35,7 +36,7 @@ export async function restoreLocalDb({
     try {
       const fileBytes = await buildMergedFileBytes({ manifest: currentManifest, segmentStore });
       await writeFile(dbPath, fileBytes);
-      return;
+      return { attempts: attempt + 1, durationMs: Date.now() - startedAt };
     } catch (err) {
       if (err.code !== 'NotFound' || attempt === maxAttempts - 1) throw err;
       const { manifest: freshManifest } = await manifestStore.read();
