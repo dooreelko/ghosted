@@ -1,5 +1,7 @@
 resource "aws_lightsail_container_service_deployment_version" "ghost" {
-  service_name = aws_lightsail_container_service.ghost.name
+  count = var.deploy_lightsail ? 1 : 0
+
+  service_name = aws_lightsail_container_service.ghost[0].name
 
   container {
     container_name = "ghost"
@@ -8,9 +10,14 @@ resource "aws_lightsail_container_service_deployment_version" "ghost" {
     environment = {
       SQLITE_S3_BUCKET    = aws_s3_bucket.data.bucket
       SQLITE_S3_REGION    = "us-east-1"
-      AWS_ROLE_ARN        = aws_iam_role.app_runtime.arn
+      AWS_ROLE_ARN        = aws_iam_role.app_runtime[0].arn
       GHOST_URL           = "https://the-well-architected-cloud.com/blog"
       MAIL_SSM_PARAM_NAME = "ghost_imap_token"
+      # Cosmetic -- Ghost/the launcher never reads this. Its only purpose is
+      # to change the container definition when var.redeploy flips, which
+      # forces a new deployment version (and therefore a real container
+      # restart) with no image rebuild and no functional config change.
+      REDEPLOY_MARKER = tostring(var.redeploy)
     }
 
     ports = {
@@ -35,9 +42,4 @@ resource "aws_lightsail_container_service_deployment_version" "ghost" {
       success_codes = "200-399"
     }
   }
-}
-
-variable "image_tag" {
-  type        = string
-  description = "Git short-SHA tag of the image to deploy (set via -var on each deploy)"
 }

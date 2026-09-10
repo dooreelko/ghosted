@@ -7,13 +7,50 @@ though it stays single-node for now. Also introduces OpenTofu as IaC and
 reorganizes phase-specific scripts/docs into per-phase directories (this
 directory; Phase 1's equivalent is `phase1/`).
 
+## Architecture
+
+![Phase 2 architecture](phase2.png)
+
+(Editable source: `phase2.drawio`, built with the `aws-architecture-diagram`
+skill — open it in [draw.io](https://app.diagrams.net/) to modify.)
+
+```
+viewer ──HTTPS──▶ CloudFront (the-well-architected-cloud.com)
+                  ├─ default behavior ─────────▶ S3 (existing site)
+                  ├─ /blog* ────────────────────▶ Lightsail Container Service ──SMTP:587──▶ Proton SMTP
+                  │                                 │  (Ghost: SqliteS3Client + launcher)
+                  │                                 │  ── AssumeRole (own account, no ExternalId) ──▶ IAM Role
+                  │                                 │       (ghost-phase2-app-runtime)
+                  │                                 │       ├─ GetObject/PutObject ──▶ S3 (data bucket)
+                  │                                 │       ├─ GetParameter+Decrypt ──▶ SSM Parameter Store
+                  │                                 │       └─ PutMetricData ──▶ CloudWatch ──alarm──▶ SNS ──▶ email
+                  └─ /blog/content/images/* ───────▶ S3 (data bucket)   (segments+manifest+leases, images)
+                                 (via CloudFront OAC + bucket policy)
+
+Route53 (site DNS) ──▶ CloudFront                ECR (ghost-phase2 repo) ──pull image──▶ Lightsail Container Service
+```
+
+No SSH, no VPC, no EC2 to patch — the container platform is fully managed.
+The container never receives a static credential of any kind; every AWS call
+it makes goes through the `AssumeRole` hop described below.
+
 ## Design
 
 - **Compute: Lightsail Containers** (Micro tier). Bundled load balancing +
   HTTPS, fully managed platform, no OS to patch.
 - **DB: SQLite, backed by S3** via a Node.js reimplementation of an
-  append-only-segments-plus-versioned-manifest design, shipped with or as
-  part of the Ghost setup — not a managed DB service.
+  append-only-segments-plus-versioned-manifest design
+  (`phase2/packages/sqlite-s3`), shipped as part of the Ghost launcher — not
+  a managed DB service. **Resolved** (was an accepted, unresolved risk at
+  design time): it does plug into Ghost's Knex/sqlite3 data layer — a custom
+  `knex.Client` subclass (`SqliteS3Client`) intercepts commit/restore around
+  a normal local SQLite file, so Ghost itself is unaware anything unusual is
+  happening underneath. Confirmed by running in production since the
+  cutover (2026-09-10). One real defect surfaced after cutover — a
+  checkpoint/compaction race that let segments accumulate unboundedly under
+  continuous writes — found and fixed (moth `zwx7x`), with boot-time
+  CloudWatch metrics and alarms added afterward specifically to catch a
+  recurrence early (moth `rk2qo`; see the Architecture diagram above).
 - **Docker image**: fork `Ghost/` (already a submodule, reused from
   `qadpt`'s build pipeline), build a custom SQLite-capable image.
 - **Image storage**: same S3 bucket as the S3-backed SQLite data.
@@ -22,41 +59,202 @@ directory; Phase 1's equivalent is `phase1/`).
   trusts the Lightsail container service's own `principalArn` (one per
   service, shared by every container/replica in it) as Principal — a live
   OpenTofu resource reference, never a hardcoded account ID or secret.
-  Covers both the SMTP-credential read (SSM) and S3-backed-SQLite access
-  (S3) via one `AssumeRole` call at container startup. No static
-  credential of any kind is baked into the image or deployment config.
-- **Migration/cutover**: one-time backup-and-restore, downtime acceptable
-  — no live-sync. Back up the Phase 1 VM (config, SQLite db,
-  `content/images/`), restore into the new Lightsail/S3-backed setup, cut
-  CloudFront over. Image transfer via **S3, not `ssm-scp.sh`'s
-  chunked-base64 approach** (that approach caps out around a few MB; 15MB
-  of images is a bad fit) — the instance's IAM role gets `s3:PutObject`
-  on the same S3 bucket already used for S3-backed SQLite/image storage
-  (one bucket, one IAM change), tars and uploads `content/images/`
-  directly, pulled down locally with `aws s3 cp`. This also resolves the
-  standing "S3 bucket for large instance file transfers" gap noted in
-  `docs/ghost.md`. `ssm-backup-instance.sh` needs extending to capture
-  `content/images/` (currently deliberately excludes it) before this is
-  usable for the actual cutover.
-- **IaC**: OpenTofu, flat local state (no S3/remote backend), one file
-  per main component (`s3.tf`, `lightsail.tf`, `iam.tf`, etc.).
+  Covers the SMTP-credential read (SSM), S3-backed-SQLite access (S3), and
+  publishing boot-time monitoring metrics (CloudWatch) via one `AssumeRole`
+  call at container startup. No static credential of any kind is baked into
+  the image or deployment config.
+- **Monitoring**: the container publishes its own CloudWatch metrics once
+  per boot (orphaned-segment count, checkpoint-retry count, restore
+  duration) rather than relying on Lightsail's limited built-in logs/metrics
+  — three alarms notify by email on the specific failure modes the
+  checkpoint fix above left as residual risk (moth `rk2qo`).
+- **Migration/cutover from Phase 1**: one-time backup-and-restore, downtime
+  accepted — no live-sync (see Decisions below for why). This was historical,
+  one-time work, not part of Phase 2's ongoing architecture — full runbook:
+  [`migration.md`](migration.md). Executed 2026-09-10.
+- **IaC**: OpenTofu, versioned S3 remote state backend (see Deploying
+  below), one file per main component (`s3.tf`, `lightsail.tf`, `iam.tf`,
+  `cloudfront.tf`, `monitoring.tf`, etc.).
 
-**Accepted risk, not resolved**: whether the S3-backed SQLite
-reimplementation actually plugs into Ghost's Knex/sqlite3 data layer is
-**not spiked separately — discovered during implementation**. If it
-doesn't pan out, the fallback is a managed DB service, raising the total
-from ~$11-12/mo to ~$26/mo (see Cost comparison below). Exact integration
-shape (custom SQLite VFS vs. a Knex-layer shim vs. something else) will be
-decided then too.
+## Cost
 
-## Cost (this design)
+**~$12-13/month, confirmed in production — lower than Phase 1's real total
+of ~$15-19/mo** (see `phase1/readme.md`'s Cost estimate: EC2 $7.60 + EBS
+$2.25 + Elastic IP $3.65 + CloudFront $1-5 + VPC-origin data processing
+~$1). Phase 2 drops the EC2 instance, its EBS volume, and its Elastic IP
+entirely (Lightsail needs none of them), and removes the VPC-origin data
+processing charge (CloudFront now reaches Lightsail as a public HTTPS
+origin, no VPC hop) — CloudFront's own request/data cost is unchanged
+either way. At design time the total depended on whether the S3-backed
+SQLite reimplementation would actually work (fallback: a managed DB,
+pushing compute+storage+DB alone to ~$26/mo) — resolved, see Design above;
+the managed-DB fallback was never needed.
 
-**~$11-12/mo** — Lightsail Micro compute $10 (bundled load balancing +
-HTTPS) + ~$1-2 S3 for the SQLite data and images, if the S3-backed-SQLite
-approach works out. **~$26/mo** if it doesn't and a managed DB (RDS or
-Lightsail DB) is needed instead — see the accepted risk above. Phase 1
-baseline for comparison: ~$8.24/mo. Full option-by-option comparison
-(Fargate, ECS-on-EC2, RDS floor) is in Cost comparison below.
+(The Cost analysis table below instead baselines against Phase 1's
+compute+storage figure alone, ~$8.24/mo — deliberately narrower, since
+that comparison is choosing between compute *options* and holds
+CloudFront/Route53/the Elastic IP out of scope on both sides rather than
+comparing full totals.)
+
+| Item | Monthly estimate | Notes |
+|---|---|---|
+| Lightsail Container Service (Micro) | ~$10.00 | Bundled load balancing + HTTPS included, no separate LB charge |
+| S3 (data bucket: SQLite store + images) | ~$1-2 | Storage + requests at ~2GB content; confirmed live content is 15MB/76 files, well under this |
+| ECR (private image registry) | ~$0.10-0.20 | One image kept at a time; storage-only cost |
+| CloudWatch (3 custom metrics + 3 alarms) | ~$1.20 | 3 metrics × $0.30/mo + 3 alarms × $0.10/mo (moth `rk2qo`) |
+| SNS (alarm email topic) | ~$0 | Well under the 1,000 free email notifications/month |
+| CloudFront (existing distribution, extended) | (pre-existing, not incremental) | Same distribution already serving Phase 1; `/blog*` and image behaviors added, no new distribution |
+| Route53 hosted zone | (pre-existing, not incremental) | Already existed before Phase 1 |
+| **Total (new, incremental)** | **~$12-13/month** | |
+
+## Cost analysis
+
+Compute + storage + DB only in the comparison below — CloudFront, Route53,
+and mail are unchanged by this phase and are excluded, matching the Cost
+table's own "pre-existing, not incremental" rows. Content+DB size assumed
+~2GB (personal blog, low image volume; confirmed live content is 15MB/76
+files, well under this).
+
+Baseline (Phase 1, current): t3.micro on-demand ~$7.60/mo + 8GB gp3 EBS
+~$0.64/mo ≈ **$8.24/mo**.
+
+| Option | Compute | Storage | DB | Total/mo | Fit |
+|---|---|---|---|---|---|
+| **ECS on EC2** (not chosen) | t3.micro $7.60 (same box, repurposed as ECS container instance) | EBS $0.64 + EFS (2GB, One Zone) $0.32 | $0 — SQLite file lives on EFS, single writer (one Ghost task) | **~$8.56** | Cheapest option, no LB needed, no forced DB service — because the instance keeps a stable private IP CloudFront's VPC origin can target directly |
+| **Fargate** (rejected) | 0.25 vCPU / 0.5GB: $8.99, **plus an NLB, ~$16.50/mo** — required because a Fargate task has no fixed IP, and CloudFront's VPC origin needs one | EFS (2GB) $0.32 | $0 — SQLite-on-EFS | **~$25.81** | The NLB erases essentially all of Fargate's cost advantage |
+| **Lightsail Containers** (chosen) | Micro $10/mo — bundled load balancing + HTTPS included, no separate LB charge | none — Lightsail containers categorically cannot attach a disk or EFS (confirmed platform limit); ephemeral 20GiB/node only | S3-backed SQLite (reimplemented), not a managed DB service | **~$11-12/mo** (compute $10 + ~$1-2 S3 for DB+images) — see the Cost table above for the full ~$12-13/mo including ECR/CloudWatch/SNS | No VPC-private origin — accepted tradeoff, see Decisions |
+| **Fargate + RDS MySQL** (reference only) | ~$8.99 | EFS (2GB) $0.32 | RDS `db.t4g.micro`, single-AZ, on-demand: $11.68 compute + $2.30 storage (20GB minimum) ≈ $13.98 | **~$23.29** | Real shared, multi-writer-capable DB — not needed at single-node scale |
+
+Cheapest viable RDS floor (for reference, not chosen): the `~$23.29/mo`
+row above is already the floor for a real single-AZ RDS instance —
+`db.t4g.micro` (Graviton) is the cheapest current-generation class, 20GB
+is RDS's minimum allocated storage for MySQL, single-AZ/no read
+replica/no enhanced monitoring already assumed. A 1-year no-upfront
+Reserved Instance would cut it to ~$20.08/mo (a standing commitment);
+RDS Free Tier could drop it further for the first 12 months, per AWS's
+standard free-tier terms. Aurora Serverless v2's minimum (~$43.80/mo) is
+*more* expensive than provisioned `db.t4g.micro`, not a path to a lower
+floor.
+
+Sources: [AWS Fargate pricing](https://aws.amazon.com/fargate/pricing/),
+[AWS Lightsail pricing](https://aws.amazon.com/lightsail/pricing),
+[AWS EFS pricing](https://aws.amazon.com/efs/pricing/),
+[AWS RDS for MySQL pricing](https://aws.amazon.com/rds/mysql/pricing/).
+
+## Deploying
+
+One command, run manually (no CI/cron trigger): `phase2/scripts/deploy.sh`,
+from the repo root, with real AWS credentials for the account that owns
+`phase2/iac/`'s resources. On a fresh checkout, initialize the IaC
+directory first — state lives in a versioned S3 bucket, wired through a
+partial backend config: `cd phase2/iac && tofu init -backend-config=backend.hcl`
+(that file is gitignored because the bucket name embeds the account ID;
+recreate it from `.local-secrets.md`). `phase2/iac/phase1.auto.tfvars` must
+also exist — every `tofu` invocation in `phase2/iac/` (including this
+script's own `tofu apply` and `build.sh`'s `tofu output`) fails outright
+without it; see `.local-secrets.md` under "Phase 2 CloudFront import (moth
+i8hlt)" for the values, and [`migration.md`](migration.md)'s step 0 for how
+it's built. It builds & pushes a new image (git short-SHA
+tag), applies it via OpenTofu, then independently verifies the live
+deployment (an HTTP smoke test, a Ghost Admin API create/read/delete
+roundtrip that exercises the real SQLite-over-S3 write path, and an HTTP
+fetch of the uploaded image's real public URL through the CDN — this last
+check exists specifically because a bucket-policy regression once broke
+every image on the site while the roundtrip alone kept reporting success,
+see moth `i8hlt`) — see
+`docs/superpowers/specs/2026-09-08-phase2-deploy-observability-design.md`
+for why a second, independent check is needed on top of Lightsail's own
+health check, and the full failure-mode/rollback design.
+
+**Outcomes:**
+- Both `tofu apply` and verification succeed: the new tag is live, script
+  exits 0.
+- `tofu apply` itself fails: the previous deployment is untouched and still
+  serving; script reports and exits non-zero, no rollback needed. (This
+  covers both Lightsail rejecting the new version, and any other resource
+  in the same apply failing — check `aws lightsail get-container-service-deployments`
+  for whether a new version actually went `ACTIVE` despite the reported
+  failure, since these are reported the same way but aren't the same thing.)
+- `tofu apply` succeeds but verification fails: script looks up the
+  previous deployment's tag from Lightsail's own history and redeploys it,
+  then exits non-zero reporting which tag ended up live.
+- First-ever deploy with no previous tag to fall back to, or a rollback
+  attempt that itself fails: script exits non-zero with an explicit
+  message — never guesses further, never auto-retries.
+
+**One-time setup, before the first deploy verification can pass:** a
+dedicated Ghost Admin API "Custom Integration" must be created manually
+through the live admin panel, and its `id:secret` stored as an SSM
+SecureString named `ghost_phase2_admin_api_key` (same pattern as the
+mail credential) — `deploy.sh` reads it with its own AWS identity, the
+container itself never receives it. See the design doc's "Admin API key
+provisioning" section for detail.
+
+**Not automated by this script:** mail delivery is not verified per-deploy
+(accepted gap, see design doc). The one-time Phase 1→2 migration/cutover is
+entirely separate, already-completed work — see [`migration.md`](migration.md).
+
+## Upgrade process (new Ghost versions)
+
+This is about pulling in a new upstream Ghost release over time — not the
+Phase 1→2 migration (see [`migration.md`](migration.md) for that one-time
+move). Manual trigger only, no CI/cron (moth `tcho2` tracks turning this
+into a scheduled/automated pipeline later).
+
+1. **Sync + test**: `scripts/sync-ghost.sh` (repo root). Fast-forwards the
+   `Ghost/` submodule's `main` onto `upstream/main` (`TryGhost/Ghost`) and
+   pushes it to the fork's `origin`; merges `main` into `fork_main` (where
+   the sqlite-s3 integration actually gets exercised — `main` itself stays
+   a pure, unmodified mirror) and pushes that too; runs `sqlite-s3`'s own
+   e2e Cucumber suite (real S3, multi-writer reconciliation, fully
+   automated, manages its own throwaway bucket); then runs the `sqlite-s3`
+   smoke test against `fork_main`. The smoke test has a manual "create a
+   post" gate, so this step only completes when run attended — it fails
+   outright (by design, not a bug) if AWS credentials are missing or the
+   run is unattended. Idempotent: safe to re-run for either trigger (new
+   upstream Ghost commits, or a new `sqlite-s3` commit in this repo).
+2. **Pin what actually deploys**: `phase2/docker/build.sh` builds the image
+   from whatever commit `Ghost/` is *currently checked out to* — not
+   automatically the `fork_main` tip step 1 just advanced (recall from
+   `migration.md`: the submodule pointer, not this outer repo's own commit,
+   determines the deployed Ghost version). Once you're satisfied with a
+   synced `fork_main`, check out the exact commit or tag you want to ship
+   and commit the updated submodule pointer:
+   ```bash
+   cd Ghost && git checkout <tag or commit on fork_main> && cd ..
+   git add Ghost && git commit -m "Ghost: bump to <version>"
+   ```
+3. **Deploy**: `phase2/scripts/upgrade.sh` (not `deploy.sh` directly — see
+   below for why) builds from that pinned commit, applies it, and
+   independently verifies the live deployment before it's considered done.
+
+**Why a version upgrade needs its own wrapper around `deploy.sh`.** A new
+Ghost version can run a DB migration on boot — unlike the one-time
+migration (which required landing on a Ghost that runs **no** schema
+migrations, so the source/target comparison stayed meaningful), a routine
+upgrade lets Ghost migrate normally. But that means if verification then
+fails, the S3-backed store may already be migrated forward, and
+`deploy.sh`'s own rollback (redeploy the previous image tag) is **not**
+guaranteed to actually fix anything — old code reading new-schema data can
+be just as broken. Unlike the Phase 1→2 migration, there's no untouched
+second copy of the data to fall back to here; the store is the only copy.
+
+`phase2/scripts/upgrade.sh` wraps `deploy.sh` to close that gap: it dumps
+the store to a local backup (`sqlite-s3`'s `bin/dump-to-sqlite.mjs`) before
+deploying, then — only if the site is still unhealthy after `deploy.sh`'s
+own rollback has already run — empties the (now-incompatible) store,
+restores it from that backup, and forces one more restart (via the
+`redeploy` toggle, see Design above) so the previous version ends up
+running against data it actually understands, not data left mid-migrated.
+Use `deploy.sh` directly only for a routine same-version redeploy, which
+never touches the schema and doesn't need any of this.
+
+`@ghost-phase2/sqlite-s3` is a plain `file:` dependency of the launcher
+package (`phase2/packages/ghost-sqlite-s3-launcher/package.json`) — both
+packages live in this same repo checkout, so it always reflects whatever's
+currently in `phase2/packages/sqlite-s3`. No separate pin to update, and
+nothing about a `sqlite-s3` change requires touching the `Ghost/` submodule
+or vice versa.
 
 ## Decisions and rejected alternatives
 
@@ -78,7 +276,9 @@ baseline for comparison: ~$8.24/mo. Full option-by-option comparison
   repo directly (reimplementing instead so it integrates with Ghost's
   actual data layer), and not RDS or Lightsail's managed DB (~$14-26/mo)
   — Lightsail has no persistent-volume option at all, and the minimum
-  that works was preferred over paying for a full managed DB.
+  that works was preferred over paying for a full managed DB. This was an
+  accepted, unresolved risk at design time (see Design above); it resolved
+  in production's favor, and the managed-DB fallback was never exercised.
 - **Credential path: cross-account `AssumeRole`, no `ExternalId`.**
   Rejected baking a static IAM access key into the image/deployment env
   (real secrets-hygiene risk — visible in deployment history). Rejected
@@ -95,41 +295,17 @@ baseline for comparison: ~$8.24/mo. Full option-by-option comparison
   custom fork build either way.
 - **Migration: one-time backup-and-restore, not live-sync.** Not needed
   for a personal blog at this scale.
-
-## Cost comparison
-
-Compute + storage + DB only — CloudFront, Route53, and mail are unchanged
-by this phase and are excluded. Content+DB size assumed ~2GB (personal
-blog, low image volume; confirmed live content is 15MB/76 files, well
-under this).
-
-Baseline (Phase 1, current): t3.micro on-demand ~$7.60/mo + 8GB gp3 EBS
-~$0.64/mo ≈ **$8.24/mo**.
-
-| Option | Compute | Storage | DB | Total/mo | Fit |
-|---|---|---|---|---|---|
-| **ECS on EC2** (not chosen) | t3.micro $7.60 (same box, repurposed as ECS container instance) | EBS $0.64 + EFS (2GB, One Zone) $0.32 | $0 — SQLite file lives on EFS, single writer (one Ghost task) | **~$8.56** | Cheapest option, no LB needed, no forced DB service — because the instance keeps a stable private IP CloudFront's VPC origin can target directly |
-| **Fargate** (rejected) | 0.25 vCPU / 0.5GB: $8.99, **plus an NLB, ~$16.50/mo** — required because a Fargate task has no fixed IP, and CloudFront's VPC origin needs one | EFS (2GB) $0.32 | $0 — SQLite-on-EFS | **~$25.81** | The NLB erases essentially all of Fargate's cost advantage |
-| **Lightsail Containers** (chosen) | Micro $10/mo — bundled load balancing + HTTPS included, no separate LB charge | none — Lightsail containers categorically cannot attach a disk or EFS (confirmed platform limit); ephemeral 20GiB/node only | S3-backed SQLite (reimplemented), not a managed DB service | **~$11-12/mo** if S3-backed-SQLite works out (compute $10 + ~$1-2 S3 for DB+images); **~$26/mo** if it doesn't and a managed DB is needed instead | No VPC-private origin — accepted tradeoff, see Decisions |
-| **Fargate + RDS MySQL** (reference only) | ~$8.99 | EFS (2GB) $0.32 | RDS `db.t4g.micro`, single-AZ, on-demand: $11.68 compute + $2.30 storage (20GB minimum) ≈ $13.98 | **~$23.29** | Real shared, multi-writer-capable DB — not needed at single-node scale |
-
-Cheapest viable RDS floor (for reference, not chosen): the `~$23.29/mo`
-row above is already the floor for a real single-AZ RDS instance —
-`db.t4g.micro` (Graviton) is the cheapest current-generation class, 20GB
-is RDS's minimum allocated storage for MySQL, single-AZ/no read
-replica/no enhanced monitoring already assumed. A 1-year no-upfront
-Reserved Instance would cut it to ~$20.08/mo (a standing commitment);
-RDS Free Tier could drop it to ~$0/mo for 12 months if unused on this
-account (unverified). Aurora Serverless v2's minimum (~$43.80/mo) is
-*more* expensive than provisioned `db.t4g.micro`, not a path to a lower
-floor.
-
-Sources: [AWS Fargate pricing](https://aws.amazon.com/fargate/pricing/),
-[AWS Lightsail pricing](https://aws.amazon.com/lightsail/pricing),
-[AWS EFS pricing](https://aws.amazon.com/efs/pricing/),
-[AWS RDS for MySQL pricing](https://aws.amazon.com/rds/mysql/pricing/).
-
----
+- **Monitoring: custom CloudWatch metrics published from the container's
+  own runtime identity, not Lightsail's built-in logs/metrics.** The
+  built-in surface is too limited to catch a slow-accumulating regression
+  (the original checkpoint leak took 16 hours of continuous uptime with no
+  restart to surface). Metrics publish once per boot rather than
+  continuously, to keep cost/API-call volume down; the accepted gap this
+  creates (a leak during a very long uptime with no restart) is mitigated
+  by a separate, unrelated weekly auto-update restart (moth `tcho2`).
+  Rejected: a recurring in-process timer independent of boot — closes the
+  gap more completely but adds always-on complexity not judged worth it
+  given the restart cadence already planned.
 
 ## Discussion: RAM investigation
 
@@ -210,8 +386,8 @@ back — no NAT/VPC config needed.
    (`AWS_EXECUTION_ENV=AWS_ECS_FARGATE`) and get auto-injected credentials
    via `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, but the assumed role
    lives in an **AWS-managed backend account** (confirmed via
-   `sts get-caller-identity`: account `538342414145`, not this project's
-   own account) with zero permissions to our resources by default
+   `sts get-caller-identity`: a distinct AWS-owned account, not this
+   project's own account) with zero permissions to our resources by default
    (`ssm:GetParameter` → `AccessDeniedException`). The resource-access
    route was tried too — Lightsail buckets can be granted to Lightsail
    **instances**, but `set-resource-access-for-bucket` explicitly rejects

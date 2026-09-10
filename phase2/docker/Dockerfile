@@ -7,6 +7,21 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 USER root
+
+# Uploaded themes are CONTENT, not software, and nothing else in the
+# migration carries them: the database names an active theme, and Ghost
+# refuses to render the frontend if that theme is not on disk (confirmed in
+# production -- the first migrated boot served admin fine and 500'd the
+# frontend with `The currently active theme "alto" is missing.`). Ghost's own
+# image ships only casper and source, which are its built-ins.
+#
+# Baking them in makes the image the complete unit of deployment: the theme
+# is versioned with the code that serves it, and a redeploy cannot lose it.
+# The trade, accepted: a theme uploaded through the admin panel lives only in
+# that container's filesystem and disappears on the next deploy, so changing
+# themes means committing here and rebuilding.
+COPY --chown=ghost:ghost phase2/docker/themes /home/ghost/content/themes
+
 COPY --chown=nobody:nogroup phase2/packages/sqlite-s3 /home/ghost/phase2-packages/sqlite-s3
 COPY --chown=nobody:nogroup phase2/packages/ghost-sqlite-s3-launcher /home/ghost/phase2-packages/ghost-sqlite-s3-launcher
 

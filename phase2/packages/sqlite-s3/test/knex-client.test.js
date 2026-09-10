@@ -8,6 +8,7 @@ import { createInMemoryObjectStore } from '../src/object-store.js';
 import { createSegmentStore } from '../src/segments.js';
 import { createManifestStore } from '../src/manifest.js';
 import { createCheckpointPolicy } from '../src/checkpoint.js';
+import { createLeaseStore } from '../src/leases.js';
 import { SqliteS3Client, registerS3Config } from '../src/knex-client.js';
 
 async function tmpDbPath() {
@@ -20,6 +21,7 @@ function makeS3Config(store) {
     manifestStore: createManifestStore(store),
     segmentStore: createSegmentStore(store),
     checkpointPolicy: createCheckpointPolicy({ maxWalBytes: 10_000_000, maxIntervalMs: 3_600_000 }),
+    leaseStore: createLeaseStore(store),
   };
 }
 
@@ -30,6 +32,39 @@ function makeKnex(dbPath, s3Config) {
     useNullAsDefault: true,
   });
 }
+
+test('acquireRawConnection forwards restoreLocalDb\'s stats to s3.onRestoreComplete', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPathA = await tmpDbPath();
+  const knexA = makeKnex(dbPathA, makeS3Config(store));
+  await knexA.schema.createTable('widgets', (t) => {
+    t.increments('id');
+    t.string('name');
+  });
+  await knexA('widgets').insert({ name: 'gizmo' });
+  await knexA.destroy();
+
+  const calls = [];
+  const s3Config = { ...makeS3Config(store), onRestoreComplete: (stats) => calls.push(stats) };
+  const dbPathB = await tmpDbPath();
+  const knexB = makeKnex(dbPathB, s3Config);
+  await knexB('widgets').select('*');
+  await knexB.destroy();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].attempts, 1);
+  assert.equal(typeof calls[0].durationMs, 'number');
+});
+
+test('acquireRawConnection tolerates a missing s3.onRestoreComplete (no hook wired)', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const knex = makeKnex(dbPath, makeS3Config(store));
+  await knex.schema.createTable('widgets', (t) => {
+    t.increments('id');
+  });
+  await knex.destroy();
+});
 
 test('data written via one Knex instance is visible after a simulated restart', async () => {
   const store = createInMemoryObjectStore();
@@ -97,6 +132,7 @@ test('a checkpoint runs when the policy says to, and merges accumulated commits 
   // been recorded, so this test doesn't depend on real size/time thresholds.
   const manifestStore = createManifestStore(store);
   const segmentStore = createSegmentStore(store);
+  const leaseStore = createLeaseStore(store);
   let recorded = 0;
   const checkpointPolicy = {
     recordSegment: (n) => { recorded += n; },
@@ -106,7 +142,7 @@ test('a checkpoint runs when the policy says to, and merges accumulated commits 
 
   const knexA = knexFactory({
     client: SqliteS3Client,
-    connection: { filename: dbPathA, s3: { manifestStore, segmentStore, checkpointPolicy } },
+    connection: { filename: dbPathA, s3: { manifestStore, segmentStore, checkpointPolicy, leaseStore } },
     useNullAsDefault: true,
   });
   // I1: checkpointing is now a rate-limited (cooldown-guarded), fire-and-
@@ -147,7 +183,7 @@ test('a checkpoint runs when the policy says to, and merges accumulated commits 
   const dbPathB = await tmpDbPath();
   const knexB = knexFactory({
     client: SqliteS3Client,
-    connection: { filename: dbPathB, s3: { manifestStore, segmentStore, checkpointPolicy: makeS3Config(store).checkpointPolicy } },
+    connection: { filename: dbPathB, s3: { manifestStore, segmentStore, checkpointPolicy: makeS3Config(store).checkpointPolicy, leaseStore } },
     useNullAsDefault: true,
   });
   const rows = await knexB('posts').select('*');
@@ -175,6 +211,7 @@ test('a checkpoint failure does not break the caller\'s actual write', async () 
   // real manifestStore for commits but asserting the write still succeeds
   // even though checkpointing will throw internally when it tries to read.
   const realManifestStore = createManifestStore(store);
+  const leaseStore = createLeaseStore(store);
   const knex = knexFactory({
     client: SqliteS3Client,
     connection: {
@@ -182,6 +219,7 @@ test('a checkpoint failure does not break the caller\'s actual write', async () 
       s3: {
         manifestStore: realManifestStore,
         segmentStore,
+        leaseStore,
         checkpointPolicy: {
           recordSegment: () => {},
           shouldCheckpoint: () => { throw new Error('boom: simulated checkpoint policy failure'); },

@@ -1,5 +1,36 @@
 import { decodePageImages } from './page-images.js';
 
+export async function foldWalSegments({ fileBytes, finalPageCount, walSegmentIds, segmentStore, pageSize }) {
+  let bytes = fileBytes;
+  let pageCount = finalPageCount;
+
+  for (const walSegmentId of walSegmentIds) {
+    const seg = await segmentStore.getSegment(walSegmentId);
+    const pages = decodePageImages(seg.bytes);
+    for (const { pageNumber, bytes: pageBytes } of pages) {
+      const endOffset = pageNumber * pageSize;
+      if (endOffset > bytes.length) {
+        const grown = Buffer.alloc(endOffset);
+        bytes.copy(grown);
+        bytes = grown;
+      }
+      pageBytes.copy(bytes, (pageNumber - 1) * pageSize);
+    }
+    if (seg.meta?.dbSizeAfterCommit) {
+      pageCount = Math.max(pageCount, seg.meta.dbSizeAfterCommit);
+    }
+  }
+
+  return { fileBytes: bytes, finalPageCount: pageCount };
+}
+
+export function truncateToPageCount(fileBytes, finalPageCount, pageSize) {
+  if (finalPageCount > 0) {
+    return fileBytes.subarray(0, finalPageCount * pageSize);
+  }
+  return fileBytes;
+}
+
 export async function buildMergedFileBytes({ manifest, segmentStore }) {
   const hasWalSegments = manifest && manifest.walSegmentIds && manifest.walSegmentIds.length > 0;
   if (!manifest || (!manifest.baseSegmentId && !hasWalSegments)) {
@@ -29,28 +60,15 @@ export async function buildMergedFileBytes({ manifest, segmentStore }) {
   }
 
   const pageSize = manifest.pageSize;
-  let finalPageCount = pageSize > 0 ? Math.floor(fileBytes.length / pageSize) : 0;
+  const initialPageCount = pageSize > 0 ? Math.floor(fileBytes.length / pageSize) : 0;
 
-  for (const walSegmentId of manifest.walSegmentIds ?? []) {
-    const seg = await segmentStore.getSegment(walSegmentId);
-    const pages = decodePageImages(seg.bytes);
-    for (const { pageNumber, bytes } of pages) {
-      const endOffset = pageNumber * pageSize;
-      if (endOffset > fileBytes.length) {
-        const grown = Buffer.alloc(endOffset);
-        fileBytes.copy(grown);
-        fileBytes = grown;
-      }
-      bytes.copy(fileBytes, (pageNumber - 1) * pageSize);
-    }
-    if (seg.meta?.dbSizeAfterCommit) {
-      finalPageCount = Math.max(finalPageCount, seg.meta.dbSizeAfterCommit);
-    }
-  }
+  const { fileBytes: folded, finalPageCount } = await foldWalSegments({
+    fileBytes,
+    finalPageCount: initialPageCount,
+    walSegmentIds: manifest.walSegmentIds ?? [],
+    segmentStore,
+    pageSize,
+  });
 
-  if (finalPageCount > 0) {
-    fileBytes = fileBytes.subarray(0, finalPageCount * pageSize);
-  }
-
-  return fileBytes;
+  return truncateToPageCount(folded, finalPageCount, pageSize);
 }

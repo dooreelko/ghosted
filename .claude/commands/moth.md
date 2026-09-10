@@ -21,9 +21,9 @@ you never decide when the task is done.
 
 It's essential to differentiate high-level specifications (tracked by moth) from during-the-implementation tasks and documents (e.g. used by superpowers skill).
 
-The difference is similar to one between software architecture and implementation. The former is abstract and changes rarely, while the latter is concrete and very in-the-moment. 
+The difference is similar to one between software architecture and implementation. The former is abstract(ideas, concepts, principles, etc.) and changes rarely, while the latter is concrete and very in-the-moment. 
 
-The core of moth-flavoured spec driven method is to preserve the solution's essence so that, for example, two years from now one can take moth files and reimplement the solution by making all the implementation desisions fit for the new times and curcumstances.
+The core of moth-flavoured spec driven method is to preserve the solution's essence so that, for example, two years from now one can take only moth files and reimplement the solution by making all the implementation desisions fit for the new times and curcumstances (e.g. when one wants to create a car after fusion is available, there's no reason creating an internal combusion engine one - the goal is the car).
 
 The goal of it is to liberate the implementer from context saturation. What matters is in moths, the rest can be deduced.
 

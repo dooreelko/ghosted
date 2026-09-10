@@ -48,11 +48,18 @@ export class SqliteS3Client extends BetterSQLite3Client {
   async acquireRawConnection() {
     const { manifest, etag } = await this._s3.manifestStore.read();
     this._manifest = manifest;
-    await restoreLocalDb({
+    const restoreStats = await restoreLocalDb({
       manifest,
+      manifestStore: this._s3.manifestStore,
       segmentStore: this._s3.segmentStore,
+      leaseStore: this._s3.leaseStore,
       dbPath: this.connectionSettings.filename,
     });
+    // Purely observational -- unlike every other s3 config field, this one
+    // is allowed a silent no-default fallback (it cannot affect
+    // correctness, only visibility), so callers that don't care about
+    // restore metrics don't have to wire anything.
+    this._s3.onRestoreComplete?.(restoreStats);
     const connection = await super.acquireRawConnection();
     // Commit capture reads deltas out of the `-wal` file, so the connection
     // must run in WAL journal mode (better-sqlite3 defaults to rollback-journal
@@ -239,7 +246,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
       ) {
         this._checkpointInFlight = true;
         const CHECKPOINT_COOLDOWN_MS = 30_000;
-        performCheckpoint({ manifestStore: s3.manifestStore, segmentStore: s3.segmentStore })
+        performCheckpoint({ manifestStore: s3.manifestStore, segmentStore: s3.segmentStore, leaseStore: s3.leaseStore })
           .then((result) => {
             if (result.checkpointed) {
               s3.checkpointPolicy.recordCheckpoint();

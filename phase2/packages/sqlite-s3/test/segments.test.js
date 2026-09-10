@@ -17,3 +17,10 @@ test('putSegment ids are unique across calls', async () => {
   const b = await store.putSegment(Buffer.from('b'));
   assert.notEqual(a, b);
 });
+
+test('deleteSegment removes it so getSegment rejects with NotFound', async () => {
+  const store = createSegmentStore(createInMemoryObjectStore());
+  const id = await store.putSegment(Buffer.from('gone-soon'));
+  await store.deleteSegment(id);
+  await assert.rejects(() => store.getSegment(id), (err) => err.code === 'NotFound');
+});

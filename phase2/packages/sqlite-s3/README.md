@@ -81,6 +81,7 @@ import {
   createSegmentStore,
   createCheckpointPolicy,
   createS3ObjectStore,
+  createLeaseStore,
 } from '@ghost-phase2/sqlite-s3';
 import { S3Client } from '@aws-sdk/client-s3';
 
@@ -100,6 +101,7 @@ const knex = knexFactory({
         maxWalBytes: 50_000_000,
         maxIntervalMs: 3_600_000,
       }),
+      leaseStore: createLeaseStore(objectStore),
     },
   },
   useNullAsDefault: true,
