@@ -11,12 +11,14 @@ import {
   createS3ObjectStore,
   createCheckpointPolicy,
   createLeaseStore,
+  reclaimOrphanedSegments,
 } from '@ghost-phase2/sqlite-s3';
 import { findDatabaseInfoPaths, patchDatabaseInfoAt } from './database-info-patch.mjs';
 import { writeCredentialProcessProfile } from './aws-credentials.mjs';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
 import { buildMailConfig } from './mail-config.mjs';
 import { buildS3StorageConfig } from './storage-config.mjs';
+import { createMetricsPublisher } from './metrics.mjs';
 
 const ghostCheckoutDir = process.env.GHOST_CHECKOUT_DIR;
 const bucket = process.env.SQLITE_S3_BUCKET;
@@ -79,6 +81,8 @@ for (const dbInfoPath of findDatabaseInfoPaths(ghostCheckoutDir)) {
 }
 console.error('[boot] database-info patching loop finished');
 
+const metrics = createMetricsPublisher();
+
 const s3Config = {
   manifestStore: createManifestStore(objectStore),
   segmentStore: createSegmentStore(objectStore),
@@ -87,6 +91,12 @@ const s3Config = {
     maxIntervalMs: Number(process.env.SQLITE_S3_MAX_CHECKPOINT_INTERVAL_MS ?? 3_600_000),
   }),
   leaseStore: createLeaseStore(objectStore),
+  // Purely observational (see rk2qo): a monitoring failure here must never
+  // affect the boot or the actual restore it's reporting on.
+  onRestoreComplete: ({ attempts, durationMs }) => {
+    metrics.publish('RestoreRetryCount', Math.max(0, attempts - 1));
+    metrics.publish('RestoreDurationMs', durationMs, 'Milliseconds');
+  },
 };
 
 // The process-wide registry is the reliable path (see knex-client.js) — some
@@ -94,6 +104,20 @@ const s3Config = {
 // config copy that doesn't reliably carry nested function-valued objects.
 registerS3Config(s3Config);
 console.error('[boot] registerS3Config done');
+
+// Boot-time orphan sweep (rk2qo): a dry run only, never deletes anything
+// itself -- the one-time/periodic cleanup is a separate, explicitly-run
+// script (see scripts/reclaim-orphaned-segments.js). This purely measures
+// and reports; a failure here must never affect Ghost's boot.
+reclaimOrphanedSegments({
+  manifestStore: s3Config.manifestStore,
+  segmentStore: s3Config.segmentStore,
+  objectStore,
+  leaseStore: s3Config.leaseStore,
+  dryRun: true,
+})
+  .then(({ deleted }) => metrics.publish('OrphanedSegmentCount', deleted.length))
+  .catch((err) => console.error('[boot] orphan sweep failed (non-fatal):', err.message));
 
 const configModule = await import(path.join(ghostCoreDir, 'core/shared/config/index.js'));
 const config = configModule.default ?? configModule;
