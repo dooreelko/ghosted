@@ -7,6 +7,7 @@ import Database from 'better-sqlite3';
 import { createInMemoryObjectStore } from '../src/object-store.js';
 import { createManifestStore } from '../src/manifest.js';
 import { createSegmentStore } from '../src/segments.js';
+import { createLeaseStore } from '../src/leases.js';
 import { seedStoreFromSqliteFile } from '../src/seed.js';
 import { dumpStoreToSqliteFile } from '../src/dump.js';
 
@@ -30,11 +31,12 @@ test('seed then dump round-trips the database byte for byte', async () => {
   const store = createInMemoryObjectStore();
   const manifestStore = createManifestStore(store);
   const segmentStore = createSegmentStore(store);
+  const leaseStore = createLeaseStore(store);
 
   await seedStoreFromSqliteFile({ dbPath: sourcePath, manifestStore, segmentStore });
 
   const outPath = await tmpFile('dumped.db');
-  const result = await dumpStoreToSqliteFile({ manifestStore, segmentStore, dbPath: outPath });
+  const result = await dumpStoreToSqliteFile({ manifestStore, segmentStore, leaseStore, dbPath: outPath });
 
   const source = await readFile(sourcePath);
   const dumped = await readFile(outPath);
@@ -47,10 +49,11 @@ test('the dumped file is a queryable database with the same rows', async () => {
   const store = createInMemoryObjectStore();
   const manifestStore = createManifestStore(store);
   const segmentStore = createSegmentStore(store);
+  const leaseStore = createLeaseStore(store);
   await seedStoreFromSqliteFile({ dbPath: sourcePath, manifestStore, segmentStore });
 
   const outPath = await tmpFile('dumped.db');
-  await dumpStoreToSqliteFile({ manifestStore, segmentStore, dbPath: outPath });
+  await dumpStoreToSqliteFile({ manifestStore, segmentStore, leaseStore, dbPath: outPath });
 
   const db = new Database(outPath, { readonly: true });
   const { n } = db.prepare('SELECT COUNT(*) AS n FROM posts').get();

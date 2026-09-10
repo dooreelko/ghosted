@@ -9,6 +9,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { createS3ObjectStore } from '../src/object-store.js';
 import { createManifestStore } from '../src/manifest.js';
 import { createSegmentStore } from '../src/segments.js';
+import { createLeaseStore } from '../src/leases.js';
 import { dumpStoreToSqliteFile } from '../src/dump.js';
 
 function parseArgs(argv) {
@@ -30,6 +31,7 @@ async function main() {
   const result = await dumpStoreToSqliteFile({
     manifestStore: createManifestStore(store),
     segmentStore: createSegmentStore(store),
+    leaseStore: createLeaseStore(store),
     dbPath,
   });
 

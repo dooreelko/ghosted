@@ -12,14 +12,14 @@ import { restoreLocalDb } from './restore.js';
  * That is right for a booting Ghost and wrong here — a dump that produces
  * nothing is a failure the caller must see.
  */
-export async function dumpStoreToSqliteFile({ manifestStore, segmentStore, dbPath }) {
+export async function dumpStoreToSqliteFile({ manifestStore, segmentStore, leaseStore, dbPath }) {
   const { manifest } = await manifestStore.read();
   const hasWalSegments = manifest?.walSegmentIds?.length > 0;
   if (!manifest || (!manifest.baseSegmentId && !hasWalSegments)) {
     throw new Error('refusing to dump: the store is empty (no manifest, or no segments)');
   }
 
-  await restoreLocalDb({ manifest, segmentStore, dbPath });
+  await restoreLocalDb({ manifest, manifestStore, segmentStore, leaseStore, dbPath });
   const { size } = await stat(dbPath);
   return { bytes: size };
 }
