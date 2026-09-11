@@ -67,7 +67,12 @@ it makes goes through the `AssumeRole` hop described below.
   per boot (orphaned-segment count, checkpoint-retry count, restore
   duration) rather than relying on Lightsail's limited built-in logs/metrics
   — three alarms notify by email on the specific failure modes the
-  checkpoint fix above left as residual risk (moth `rk2qo`).
+  checkpoint fix above left as residual risk (moth `rk2qo`). The
+  orphaned-segments alarm is sticky on the last boot's reading rather than a
+  rolling window (moth `l32hg`) -- an ALARM there is often benign (a lease
+  held during boot orphans a segment by design), so run `deorphan.sh` and
+  see if the next boot clears it before assuming the checkpoint fix
+  regressed.
 - **Migration/cutover from Phase 1**: one-time backup-and-restore, downtime
   accepted — no live-sync (see Decisions below for why). This was historical,
   one-time work, not part of Phase 2's ongoing architecture — full runbook:
