@@ -200,29 +200,13 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
-  # Phase 1 EC2 origin, via CloudFront's VPC-origin feature. Its ID and the
-  # instance's private DNS name are no-default variables (see variables.tf)
-  # rather than literals -- both are sensitive identifiers that must stay
-  # out of tracked files; the real values live in .local-secrets.md and are
-  # supplied via the gitignored phase1.auto.tfvars.
-  #
-  # No /blog* behaviour targets this origin_id while deploy_cloudfront =
-  # true (all four are retargeted to lightsail-ghost-phase2 above) -- this
-  # block still has to exist though, because it's the rollback path:
-  # flipping deploy_cloudfront back to false must not require re-adding an
-  # origin, only re-pointing the behaviours' target_origin_id.
-  origin {
-    connection_attempts = 3
-    connection_timeout  = 10
-    domain_name         = var.appserver_private_dns
-    origin_id           = "ghost-classic-appserver-vpc-origin"
-    origin_path         = ""
-    vpc_origin_config {
-      origin_keepalive_timeout = 5
-      origin_read_timeout      = 30
-      vpc_origin_id            = var.vpc_origin_id
-    }
-  }
+  # Phase 1 EC2 VPC-origin -- REMOVED 2026-09-11. The Phase 1 instance was
+  # terminated and the CloudFront VPC origin (vo_9dZLR0ZDlJGBe3m7LL7vht) was
+  # deleted out-of-band as part of Phase 1 cost teardown; this block used to
+  # be kept as deploy_cloudfront's rollback path, but that path is dead now
+  # that the underlying VPC origin no longer exists -- keeping the origin
+  # declared here would just make routine applies fight the real (already
+  # cleaned up) state. deploy_cloudfront=false is no longer a valid rollback.
 
   # Phase 1 marketing-root S3 origin (not part of phase2 state). Its OAC ID
   # and its domain_name (which embeds a bucket name and region) are both

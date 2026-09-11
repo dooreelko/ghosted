@@ -2,8 +2,17 @@ variable "image_tag" {
   type        = string
   description = "Git short-SHA tag of the image to deploy (set via -var on each deploy)"
   # Only read when deploy_lightsail = true; the prereq-only apply has no image
-  # to deploy yet, so it must not require a value.
+  # to deploy yet, so it must not require a value there.
   default = ""
+
+  validation {
+    # deploy_lightsail defaults true now (routine, permanent state) -- an
+    # apply that forgets -var image_tag would otherwise silently repoint the
+    # live container at "<repo>:" and force a replacement. Caught here
+    # rather than as a surprise container restart with a broken image.
+    condition     = var.deploy_lightsail == false || var.image_tag != ""
+    error_message = "image_tag is required (pass -var image_tag=<git-short-sha>) whenever deploy_lightsail = true."
+  }
 }
 
 variable "deploy_lightsail" {
@@ -16,16 +25,6 @@ variable "redeploy" {
   type        = bool
   description = "Cosmetic toggle to force a new Lightsail deployment version -- and therefore a real container restart -- without rebuilding the image or changing any functional config. Each transition (false->true or true->false) forces one restart; flip it, apply, then flip it back whenever you just want a fresh boot (e.g. to refresh the boot-time CloudWatch metrics)."
   default     = false
-}
-
-variable "vpc_origin_id" {
-  type        = string
-  description = "ID of the CloudFront VPC origin that targets the Phase 1 EC2 appserver. No default -- see .local-secrets.md (\"Phase 2 CloudFront import\" heading) for the value, supplied via the gitignored phase2/iac/phase1.auto.tfvars."
-}
-
-variable "appserver_private_dns" {
-  type        = string
-  description = "Private DNS name of the Phase 1 EC2 appserver instance, used as the VPC-origin domain_name. No default -- see .local-secrets.md (\"Phase 2 CloudFront import\" heading) for the value, supplied via the gitignored phase2/iac/phase1.auto.tfvars."
 }
 
 variable "marketing_root_oac_id" {
@@ -45,7 +44,7 @@ variable "site_acm_certificate_arn" {
 
 variable "deploy_cloudfront" {
   type        = bool
-  description = "Point the CloudFront /blog* behaviours at Lightsail instead of the Phase 1 EC2 origin, and add the image behaviour. Was the one-time cutover switch (moth i8hlt, executed 2026-09-10); defaults true now that the cutover is complete and permanent -- every routine apply must keep matching live state (see phase2/readme.md's Design section for the incident this caused once). Pass -var deploy_cloudfront=false explicitly only to roll back to the Phase 1 origin."
+  description = "Point the CloudFront /blog* behaviours at Lightsail instead of the Phase 1 EC2 origin, and add the image behaviour. Was the one-time cutover switch (moth i8hlt, executed 2026-09-10); defaults true now that the cutover is complete and permanent -- every routine apply must keep matching live state (see phase2/readme.md's Design section for the incident this caused once). Locked true: the Phase 1 EC2 origin was deleted in the 2026-09-11 cost teardown, so there is no Phase 1 origin left to roll back to."
   default     = true
 
   validation {
@@ -53,5 +52,14 @@ variable "deploy_cloudfront" {
     # confusing provider error mid-apply.
     condition     = var.deploy_cloudfront == false || var.deploy_lightsail == true
     error_message = "deploy_cloudfront requires deploy_lightsail = true: there would be no Lightsail origin to point the behaviours at."
+  }
+
+  validation {
+    # The Phase 1 EC2 origin block was removed from cloudfront.tf once the
+    # underlying VPC origin was deleted (2026-09-11 cost teardown) -- so
+    # deploy_cloudfront=false would point behaviours at an origin_id that no
+    # longer exists in this config.
+    condition     = var.deploy_cloudfront == true
+    error_message = "deploy_cloudfront=false is no longer a valid rollback: the Phase 1 EC2 origin was deleted and its config block removed."
   }
 }
