@@ -31,17 +31,27 @@ locals {
 # Direct signal that the original bug's failure mode (unbounded segment
 # leakage) has recurred: any orphaned segment found by the launcher's
 # boot-time dry-run sweep is unexpected under normal operation.
+#
+# Sticky-on-last-boot, not rolling-window (moth l32hg): boots are irregular,
+# so period is the CloudWatch minimum (60s) rather than the 1wk window the
+# other two alarms use, and treat_missing_data = "ignore" holds whatever
+# state the last boot's datapoint set instead of transitioning on missing
+# data. Net effect: a bad boot sets ALARM and it stays there -- across any
+# number of quiet weeks -- until a later boot actually reports 0, at which
+# point OK fires immediately and is caused by that real event. The previous
+# 1wk/Maximum/notBreaching shape let one stale datapoint pin ALARM for up to
+# a week and then send a decoupled "recovered" email when it aged out.
 resource "aws_cloudwatch_metric_alarm" "orphaned_segments" {
   alarm_name          = "ghost-phase2-orphaned-segments"
-  alarm_description   = "A boot-time dry-run sweep found orphaned sqlite-s3 segments -- the checkpoint/reclamation fix (zwx7x) may have regressed."
+  alarm_description   = "A boot-time dry-run sweep found orphaned sqlite-s3 segments -- the checkpoint/reclamation fix (zwx7x) may have regressed. Often benign (a lease held during boot orphans a segment by design, see deorphan.sh) -- run deorphan.sh and see if a subsequent boot clears this before assuming a regression."
   namespace           = "GhostPhase2/SqliteS3"
   metric_name         = "OrphanedSegmentCount"
   statistic           = "Maximum"
-  period              = local.alarm_period_seconds
+  period              = 60
   evaluation_periods  = 1
   comparison_operator = "GreaterThanThreshold"
   threshold           = 0
-  treat_missing_data  = "notBreaching"
+  treat_missing_data  = "ignore"
   alarm_actions       = [aws_sns_topic.checkpoint_alarms.arn]
   ok_actions          = [aws_sns_topic.checkpoint_alarms.arn]
 }
