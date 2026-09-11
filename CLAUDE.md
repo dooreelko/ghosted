@@ -17,6 +17,13 @@ appended. Never drop existing text.
 
 See `moth --agent-help`
 
+## DOD
+
+never run `moth done`.
+never run `moth start`.
+
+you never decide when the task is done.
+
 ## Git
 
 Don't use worktrees, but feature branches instead

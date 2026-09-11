@@ -1,4 +1,4 @@
-execute `moth show` and if there's a current task, start implementing it.
+execute `moth show` and if there's a current task, start implementing it on a feature branch named <moth_id-short-desc>.
 
 use IDEA.md and README.md for global context, us  `moth ls` and `moth show <id>` to view tasks in "done" status for context and past decisions. 
 

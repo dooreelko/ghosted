@@ -56,3 +56,33 @@ leak forms in the hour before a restart.
 
 Implementation: phase2/iac/monitoring.tf (orphaned_segments alarm),
 phase2/readme.md (Monitoring bullet runbook note).
+
+----- AI agent updates -------
+
+Added phase2/scripts/redeploy.sh: forces a fresh container boot with no
+image change (flips the existing `redeploy` tofu var's cosmetic marker),
+then verifies the new boot by curling the Lightsail service's own URL
+directly -- not the CloudFront domain, since /blog*'s 60s-TTL cache policy
+means a request through CloudFront can return a cached response and prove
+nothing about the new boot's health. Purpose: give an easy way to get one
+more clean boot-time reading (e.g. after deorphan.sh) to confirm the
+sticky alarm actually self-clears, without running the full deploy.sh
+image-build pipeline.
+
+Considered and rejected: making the boot-time orphan sweep actually delete
+(flip preload.mjs's dryRun to false) instead of just reporting the count.
+Rejected because it collapses detection and action into one unattended
+step -- deorphan.sh's own two-gate design (dry-run default, explicit
+--execute) exists so a human reviews what's about to be deleted before an
+irreversible S3 delete happens. Boot-time auto-delete would also exercise
+the already-flagged lease-expiry gap (lease.refresh() unused, see the
+restore-duration-high alarm's rationale) for real instead of as a dry-run
+report: a lease that silently expired mid-restore would no longer protect
+that segment, and minAgeMs=1h is the only remaining backstop. Kept boot as
+report-only; real cleanup stays a deliberate, human-triggered action.
+
+Reaffirmed: OrphanedSegmentCount > 0 is not a surefire leak indicator (see
+the original two design notes above) -- a lease held during boot orphans a
+segment by design. This alarm answers "did something unexpected happen,"
+not "is there definitely a leak" -- the runbook note's deorphan.sh-first
+step is how that gets resolved case by case.
