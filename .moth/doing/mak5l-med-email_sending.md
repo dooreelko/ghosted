@@ -34,3 +34,14 @@ The manual test used the *member portal* magic-link endpoint (`/blog/members/api
 **Rejected alternative:** leaving `transports: ["file"]` and instead reading the log file inside the container (e.g. via an SSM exec/shell into the container) -- rejected as a standing operational tax (have to exec in every time to see anything) versus a one-line config override that makes `get-container-log` work as expected going forward.
 
 **Next step (pending):** rebuild/redeploy image with this change, then re-run the staff forgot-password test (from decision record 1 above) and confirm both the email arrives and the attempt is now visible in Lightsail's container logs.
+
+
+## Decision record 3 (2026-09-14): 400 on member signin after making robots@ a member
+
+**Symptom:** with `robots@the-well-architected-cloud.com` now a real Member, the magic-link signin request (which now actually attempts a send, per decision record 1) returns HTTP 400.
+
+**Root cause:** `router-controller.js`'s `sendMagicLink` returns 400 specifically when the mail attempt throws with `err.code === 'EENVELOPE'` (SMTP envelope rejection). Our `mail` config (`mail-config.mjs`) never set `mail.from`. Ghost's `getDefaultEmail()` (`settings-helpers.js`) falls back to a generated `noreply@<site-domain>` address for the member-facing from/support address whenever `mail.from` is unset -- so member emails were being sent From `noreply@the-well-architected-cloud.com` while authenticating to Proton as `robots@the-well-architected-cloud.com`. Proton's submission server rejects a From address that isn't the authenticated mailbox, which nodemailer surfaces as `EENVELOPE`.
+
+**Fix:** `buildMailConfig` now also sets `from: user` (same address used for SMTP auth), so the member-facing from address always matches the authenticated Proton mailbox.
+
+**Next step (pending):** rebuild/redeploy with all three fixes (SSM credential parsing, stdout logging, mail.from), then re-test member magic-link signin for robots@ end-to-end.
