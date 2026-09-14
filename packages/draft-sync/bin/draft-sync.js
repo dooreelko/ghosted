@@ -26,7 +26,7 @@ async function main() {
 
   if (command === 'list') {
     const api = createAdminApi();
-    const { posts } = await api.posts.browse({ filter: 'status:draft', limit: 'all' });
+    const posts = await api.posts.browse({ filter: 'status:draft', limit: 'all' });
     for (const post of posts) {
       console.log(`${post.id}\t${post.slug}\t${post.title}\t${post.updated_at}`);
     }
