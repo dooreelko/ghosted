@@ -132,14 +132,14 @@ config.set('database:connection', {
 console.error('[boot] database:client/useNullAsDefault/connection config set');
 
 const mailParamName = process.env.MAIL_SSM_PARAM_NAME ?? 'ghost_imap_token';
+// The SSM parameter stores only the SMTP password (see phase1/jpjiy's
+// mail-credential handling) -- the sending address is fixed separately.
+const mailUser = process.env.MAIL_USER ?? 'robots@the-well-architected-cloud.com';
 const ssm = new SSMClient({ region, credentials: sharedCredentials });
 console.error('[boot] about to send SSM GetParameterCommand');
 const mailParam = await ssm.send(new GetParameterCommand({ Name: mailParamName, WithDecryption: true }));
 console.error('[boot] SSM GetParameterCommand resolved');
-// The existing SSM parameter stores "user:password" as its value (see
-// phase1/jpjiy's mail-credential handling) — split on the first colon.
-const [mailUser, ...mailPassParts] = mailParam.Parameter.Value.split(':');
-config.set('mail', buildMailConfig({ user: mailUser, pass: mailPassParts.join(':') }));
+config.set('mail', buildMailConfig({ user: mailUser, pass: mailParam.Parameter.Value }));
 console.error('[boot] mail config set');
 
 const ghostUrl = process.env.GHOST_URL;
