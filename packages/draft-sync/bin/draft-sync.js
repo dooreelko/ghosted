@@ -16,6 +16,10 @@ function usageExit() {
   process.exit(1);
 }
 
+function firstNonFlagArg(args) {
+  return args.find((arg) => !arg.startsWith('--'));
+}
+
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   const repoRoot = process.cwd();
@@ -30,7 +34,7 @@ async function main() {
   }
 
   if (command === 'pull') {
-    const slug = rest.find((arg) => !arg.startsWith('--'));
+    const slug = firstNonFlagArg(rest);
     if (!slug) {
       usageExit();
     }
@@ -42,7 +46,7 @@ async function main() {
   }
 
   if (command === 'push') {
-    const slug = rest[0];
+    const slug = firstNonFlagArg(rest);
     if (!slug) {
       usageExit();
     }
