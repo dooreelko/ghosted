@@ -162,4 +162,15 @@ console.error('[boot] server:host config set to 0.0.0.0');
 config.set('storage:active', 'S3Storage');
 config.set('storage:S3Storage', buildS3StorageConfig({ bucket, region, ghostUrl }));
 console.error('[boot] storage config set');
+
+// NODE_ENV=production (set by the base image's Dockerfile.production)
+// loads core/shared/config/env/config.production.json, which overrides
+// logging.transports from the default ["stdout"] to ["file"] -- every
+// Ghost-core log line (mail-send errors, request logs, etc.) was silently
+// going to a rotating file under content/logs/ inside the container
+// instead of stdout, so Lightsail's log capture only ever showed this
+// preload script's own boot lines. Force stdout back on.
+config.set('logging:transports', ['stdout']);
+console.error('[boot] logging:transports config set to stdout');
+
 console.error('[boot] preload.mjs complete, handing off to index.js');

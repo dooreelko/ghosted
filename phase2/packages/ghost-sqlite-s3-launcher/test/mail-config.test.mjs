@@ -6,6 +6,7 @@ test('buildMailConfig produces Ghost SMTP transport config', () => {
   const result = buildMailConfig({ user: 'robots@the-well-architected-cloud.com', pass: 'secret-token' });
 
   assert.deepEqual(result, {
+    from: 'robots@the-well-architected-cloud.com',
     transport: 'SMTP',
     options: {
       service: 'ProtonMail',
