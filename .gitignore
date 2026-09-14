@@ -12,3 +12,4 @@ phase2/iac/terraform.tfstate.backup
 phase2/iac/*.tfvars
 phase2/iac/tfplan
 phase2/iac/backend.hcl
+.ghost-drafts/
