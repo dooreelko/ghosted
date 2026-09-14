@@ -23,6 +23,16 @@ test('draftDir builds the per-slug path', () => {
   });
 });
 
+test('draftDir rejects slugs that could escape .ghost-drafts/', () => {
+  withTmpRepo((repoRoot) => {
+    assert.throws(() => draftDir(repoRoot, '../../etc'), /invalid slug/);
+    assert.throws(() => draftDir(repoRoot, 'a/b'), /invalid slug/);
+    assert.throws(() => draftDir(repoRoot, 'a\\b'), /invalid slug/);
+    assert.throws(() => draftDir(repoRoot, '.'), /invalid slug/);
+    assert.throws(() => draftDir(repoRoot, '..'), /invalid slug/);
+  });
+});
+
 test('draftExists is false before write, true after', () => {
   withTmpRepo((repoRoot) => {
     assert.equal(draftExists(repoRoot, 'a'), false);

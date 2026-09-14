@@ -2,6 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function draftDir(repoRoot, slug) {
+  if (/[/\\]/.test(slug) || slug === '.' || slug === '..') {
+    throw new Error(`invalid slug: ${slug}`);
+  }
   return join(repoRoot, '.ghost-drafts', slug);
 }
 
