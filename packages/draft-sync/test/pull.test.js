@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pullDraft } from '../src/pull.js';
+import { pullDraft, pullAllDrafts } from '../src/pull.js';
 import { readDraft } from '../src/store.js';
 
 const FIXTURE_LEXICAL = JSON.stringify({
@@ -23,6 +23,21 @@ function fakeAdminApi({ id = 'post-1', slug = 'my-draft', updated_at = '2026-01-
         assert.equal(data.slug, slug);
         assert.deepEqual(queryParams, { formats: 'lexical' });
         return { id, slug, updated_at, lexical };
+      }
+    }
+  };
+}
+
+function fakeAdminApiForSlugs(postsBySlug) {
+  return {
+    posts: {
+      async browse() {
+        return Object.values(postsBySlug);
+      },
+      async read(data) {
+        const post = postsBySlug[data.slug];
+        if (!post) throw new Error(`no such post: ${data.slug}`);
+        return post;
       }
     }
   };
@@ -96,5 +111,35 @@ test('pullDraft warns on stderr when the draft contains rich content (cards/embe
 
     assert.match(stderrOutput, /contains rich content \(cards\/embeds\/images\)/);
     assert.match(stderrOutput, /my-draft/);
+  });
+});
+
+test('pullAllDrafts pulls every remote draft', async () => {
+  await withTmpRepo(async (repoRoot) => {
+    const api = fakeAdminApiForSlugs({
+      'draft-a': { id: 'a', slug: 'draft-a', updated_at: '2026-01-01T00:00:00.000Z', lexical: FIXTURE_LEXICAL },
+      'draft-b': { id: 'b', slug: 'draft-b', updated_at: '2026-01-02T00:00:00.000Z', lexical: FIXTURE_LEXICAL }
+    });
+    const results = await pullAllDrafts(api, repoRoot);
+    assert.deepEqual(results, [
+      { slug: 'draft-a', ok: true },
+      { slug: 'draft-b', ok: true }
+    ]);
+    assert.match(readDraft(repoRoot, 'draft-a').markdown, /Draft body/);
+    assert.match(readDraft(repoRoot, 'draft-b').markdown, /Draft body/);
+  });
+});
+
+test('pullAllDrafts reports a per-draft failure without aborting the rest', async () => {
+  await withTmpRepo(async (repoRoot) => {
+    const api = fakeAdminApiForSlugs({
+      'draft-a': { id: 'a', slug: 'draft-a', updated_at: '2026-01-01T00:00:00.000Z', lexical: null },
+      'draft-b': { id: 'b', slug: 'draft-b', updated_at: '2026-01-02T00:00:00.000Z', lexical: FIXTURE_LEXICAL }
+    });
+    const results = await pullAllDrafts(api, repoRoot);
+    assert.equal(results[0].ok, false);
+    assert.match(results[0].error, /has no lexical content/);
+    assert.deepEqual(results[1], { slug: 'draft-b', ok: true });
+    assert.match(readDraft(repoRoot, 'draft-b').markdown, /Draft body/);
   });
 });

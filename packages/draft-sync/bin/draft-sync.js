@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import { createAdminApi } from '../src/admin-api.js';
-import { pullDraft } from '../src/pull.js';
+import { pullDraft, pullAllDrafts } from '../src/pull.js';
 import { pushDraft } from '../src/push.js';
 
 const USAGE = `Usage: draft-sync <command> [args]
 
 Commands:
   list                 List remote drafts (id, slug, title, updated_at)
-  pull <slug> [--force]  Pull a draft to .ghost-drafts/<slug>/draft.md
+  pull [slug] [--force]  Pull a draft to .ghost-drafts/<slug>/draft.md, or every draft if no slug is given
   push <slug>           Push local edits back to Ghost
 `;
 
@@ -35,11 +35,26 @@ async function main() {
 
   if (command === 'pull') {
     const slug = firstNonFlagArg(rest);
-    if (!slug) {
-      usageExit();
-    }
     const force = rest.includes('--force');
     const api = createAdminApi();
+
+    if (!slug) {
+      const results = await pullAllDrafts(api, repoRoot, { force });
+      let failed = false;
+      for (const result of results) {
+        if (result.ok) {
+          console.log(`pulled ${result.slug} -> .ghost-drafts/${result.slug}/draft.md`);
+        } else {
+          failed = true;
+          console.error(`failed to pull ${result.slug}: ${result.error}`);
+        }
+      }
+      if (failed) {
+        process.exit(1);
+      }
+      return;
+    }
+
     await pullDraft(api, repoRoot, slug, { force });
     console.log(`pulled ${slug} -> .ghost-drafts/${slug}/draft.md`);
     return;

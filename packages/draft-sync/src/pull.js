@@ -38,3 +38,22 @@ export async function pullDraft(adminApi, repoRoot, slug, { force = false } = {}
     meta: { id: post.id, updated_at: post.updated_at }
   }, { force: true });
 }
+
+/**
+ * Pulls every remote draft. A single draft's failure (e.g. an existing
+ * local copy without --force) doesn't abort the rest -- each is reported
+ * in the returned per-slug results instead.
+ */
+export async function pullAllDrafts(adminApi, repoRoot, { force = false } = {}) {
+  const posts = await adminApi.posts.browse({ filter: 'status:draft', limit: 'all' });
+  const results = [];
+  for (const post of posts) {
+    try {
+      await pullDraft(adminApi, repoRoot, post.slug, { force });
+      results.push({ slug: post.slug, ok: true });
+    } catch (err) {
+      results.push({ slug: post.slug, ok: false, error: err.message });
+    }
+  }
+  return results;
+}

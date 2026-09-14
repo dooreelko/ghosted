@@ -24,10 +24,10 @@ test('unknown command prints usage and exits non-zero', async () => {
   });
 });
 
-test('pull without a slug prints usage and exits non-zero', async () => {
-  await assert.rejects(execFileAsync('node', [CLI, 'pull']), (err) => {
+test('pull without a slug attempts to pull all drafts (fails here on missing admin API env vars, not usage)', async () => {
+  await assert.rejects(execFileAsync('node', [CLI, 'pull'], { env: { PATH: process.env.PATH } }), (err) => {
     assert.equal(err.code, 1);
-    assert.match(err.stderr, /Usage: draft-sync/);
+    assert.match(err.stderr, /GHOST_ADMIN_API_URL/);
     return true;
   });
 });
