@@ -34,7 +34,11 @@ test('pushDraft succeeds and refreshes local state when remote is unchanged', as
       posts: {
         async read(data) {
           assert.equal(data.id, 'post-1');
-          return { id: 'post-1', updated_at: '2026-01-01T00:00:00.000Z', lexical: ORIGINAL_LEXICAL };
+          // metadata-only change since pull (content diffing wouldn't catch this) —
+          // the fake `read`'s updated_at deliberately differs from the local meta.json
+          // seeded by seedLocalDraft, so the test can tell apart which updated_at
+          // pushDraft actually sends to `edit`.
+          return { id: 'post-1', updated_at: '2026-01-01T00:03:00.000Z', lexical: ORIGINAL_LEXICAL };
         },
         async edit(data) {
           editCalls.push(data);
@@ -47,6 +51,9 @@ test('pushDraft succeeds and refreshes local state when remote is unchanged', as
 
     assert.equal(editCalls.length, 1);
     assert.equal(editCalls[0].id, 'post-1');
+    // must be the updated_at from local meta.json (last pull), not the value
+    // returned by the read just performed above — that's the spec's second
+    // optimistic-lock guard, narrower than the content-diff check.
     assert.equal(editCalls[0].updated_at, '2026-01-01T00:00:00.000Z');
     assert.match(editCalls[0].lexical, /Edited body/);
 
@@ -76,6 +83,32 @@ test('pushDraft aborts when the remote draft changed since last pull', async () 
     );
 
     // local state untouched
+    const draft = readDraft(repoRoot, 'my-draft');
+    assert.equal(draft.originalLexical, ORIGINAL_LEXICAL);
+  });
+});
+
+test('pushDraft throws a clear error when the edit response is missing expected fields', async () => {
+  await withTmpRepo(async (repoRoot) => {
+    seedLocalDraft(repoRoot, 'my-draft');
+    const adminApi = {
+      posts: {
+        async read() {
+          return { id: 'post-1', updated_at: '2026-01-01T00:00:00.000Z', lexical: ORIGINAL_LEXICAL };
+        },
+        async edit() {
+          // malformed response: remote push succeeded but lexical is missing
+          return { id: 'post-1', updated_at: '2026-01-02T00:00:00.000Z' };
+        }
+      }
+    };
+
+    await assert.rejects(
+      () => pushDraft(adminApi, repoRoot, 'my-draft'),
+      /push succeeded remotely but the response was missing expected fields.*draft-sync pull my-draft --force/
+    );
+
+    // local state untouched by the failed refresh
     const draft = readDraft(repoRoot, 'my-draft');
     assert.equal(draft.originalLexical, ORIGINAL_LEXICAL);
   });

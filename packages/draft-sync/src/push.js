@@ -13,9 +13,15 @@ export async function pushDraft(adminApi, repoRoot, slug) {
 
   const lexical = markdownToLexicalString(local.markdown);
   const updated = await adminApi.posts.edit(
-    { id: local.meta.id, updated_at: remote.updated_at, lexical },
+    { id: local.meta.id, updated_at: local.meta.updated_at, lexical },
     { formats: 'lexical' }
   );
+
+  if (!updated.lexical || !updated.id || !updated.updated_at) {
+    throw new Error(
+      `push succeeded remotely but the response was missing expected fields (id/updated_at/lexical) — local draft state may now be stale; re-run "draft-sync pull ${slug} --force" to resync`
+    );
+  }
 
   writeDraft(repoRoot, slug, {
     markdown: local.markdown,
