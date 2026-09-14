@@ -26,11 +26,20 @@ scripts/draft-sync -> ../packages/draft-sync/bin/draft-sync.js   # symlink
 
 - `@tryghost/admin-api` — official Node client, handles JWT signing
   from the Admin API key.
-- `@tryghost/kg-lexical-html-renderer` — lexical -> html (pulled from
-  the `Ghost/` submodule's own `koenig/` packages; vendored via
-  `file:` dependency pointing into the submodule, not a separate npm
-  install, so it always matches the running Ghost version).
-- `@tryghost/kg-html-to-lexical` — html -> lexical, same sourcing.
+- `@tryghost/kg-lexical-html-renderer` — lexical -> html. Pinned to an
+  exact registry version (`1.5.0`), matched by hand to the version
+  vendored in the `Ghost/` submodule's `koenig/` packages at the time
+  this was written — not a `file:` dependency into the submodule.
+- `@tryghost/kg-html-to-lexical` — html -> lexical, pinned the same
+  way (`1.4.0`).
+- `@tryghost/kg-default-nodes` — node schema shared by both converters
+  above, pinned the same way (`2.2.1`), matched to `Ghost/ghost/*`'s
+  copy rather than `Ghost/koenig/*`.
+
+  These three pins should be re-checked against
+  `Ghost/koenig/*/package.json` and `Ghost/ghost/*/package.json` (for
+  `kg-default-nodes`) whenever the `Ghost/` submodule is upgraded —
+  nothing enforces they stay in sync automatically.
 - `turndown` — html -> markdown.
 - `marked` — markdown -> html.
 
@@ -79,13 +88,22 @@ Calls `GET /admin/posts/?filter=status:draft`, prints `id`, `slug`,
 
 ## Round-trip fidelity
 
-Turndown/marked pass through unrecognized HTML unchanged by default
-(no custom card-token scheme needed for v1). A Koenig card that
-renders to a `<div data-kg-card-*>` wrapper will show up in the
-markdown as that raw HTML block; editing inside it in vim is possible
-but not pleasant — acceptable per the ticket's scope (plain
-prose/markdown drafts), documented as a known limitation rather than
-solved.
+Contrary to an earlier draft of this doc, Koenig card content is
+**not** preserved faithfully through the markdown round-trip.
+Turndown/marked do not pass unrecognized card HTML through unchanged:
+converting a card (image, embed, bookmark, etc.) to markdown and back
+can silently lose or reset card-specific state — e.g. an image card's
+caption gets emptied and its `cardWidth` resets to the default on the
+way back through `kg-html-to-lexical`. There is no custom card-token
+scheme in v1 to guard against this.
+
+This is an accepted, known limitation for v1 — the ticket's scope is
+plain prose/markdown drafts — but users must be warned rather than
+told the opposite of what happens. `pullDraft` prints a warning to
+stderr when the fetched lexical content contains node types other
+than plain prose (paragraph/heading/quote/list/linebreak), so a draft
+containing cards is flagged at pull time rather than silently
+corrupted at push time.
 
 ## Error handling
 
