@@ -6,6 +6,9 @@ import { checkUrls } from '../src/http-smoke-test.mjs';
 import { generateAdminToken } from '../src/admin-token.mjs';
 import { uploadImage, createDraftPost, getPost, deletePost } from '../src/admin-api-client.mjs';
 import { deleteS3Object } from '../src/s3-object-delete.mjs';
+import { sendMagicLinkSmoke } from '../src/mail-smoke-test.mjs';
+
+const MAIL_SMOKE_TEST_MEMBER_EMAIL = 'robots@the-well-architected-cloud.com';
 
 function parseArgs(argv) {
   const args = {};
@@ -86,6 +89,12 @@ async function main() {
 
   if (roundtripFailure) {
     console.log(JSON.stringify({ ok: false, step: 'admin-api-roundtrip', detail: roundtripFailure.message }));
+    process.exit(1);
+  }
+
+  const mailSmoke = await sendMagicLinkSmoke(base, MAIL_SMOKE_TEST_MEMBER_EMAIL);
+  if (!mailSmoke.ok) {
+    console.log(JSON.stringify({ ok: false, step: 'mail-smoke-test', detail: mailSmoke }));
     process.exit(1);
   }
 
