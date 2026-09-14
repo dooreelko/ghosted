@@ -45,3 +45,36 @@ The manual test used the *member portal* magic-link endpoint (`/blog/members/api
 **Fix:** `buildMailConfig` now also sets `from: user` (same address used for SMTP auth), so the member-facing from address always matches the authenticated Proton mailbox.
 
 **Next step (pending):** rebuild/redeploy with all three fixes (SSM credential parsing, stdout logging, mail.from), then re-test member magic-link signin for robots@ end-to-end.
+
+
+## Decision record 4 (2026-09-14): stdout-logging fix confirmed working; new EENVELOPE cause found
+
+**Confirmed working:** after deploy, the real Ghost-core error appeared directly in container logs (decision record 2's fix verified in production).
+
+**New error surfaced:** `553 5.7.1 <noreply@the-well-architected-cloud.com>: Sender address rejected: not owned by user robots@the-well-architected-cloud.com` -- still EENVELOPE, still using `noreply@`, despite decision record 3's `mail.from` fix being deployed.
+
+**Root cause:** member-facing emails (magic-link signin included) get their From/support address from `EmailAddressService.getMembersSupportAddress()`, which reads Ghost's `members_support_address` **Settings table row** first -- not `mail.from`/`getDefaultEmail()` at all (that's only the fallback when `members_support_address` is unset). Ghost ships this setting with `defaultValue: "noreply"` (`core/server/data/schema/default-settings/default-settings.json`), which combined with the site's own domain produces `noreply@the-well-architected-cloud.com` regardless of `mail.from`. This is per-install application data (a DB row), not something `preload.mjs`'s config overrides touch.
+
+**Decision: fix via Ghost Settings, not code.** Self-hosted installs (`managedEmailEnabled` false) can set this freely with no verification-email requirement (`email-address-service.ts` `validate()`). Set `members_support_address` to `robots@the-well-architected-cloud.com` via Admin UI (Settings -> Membership -> Portal settings) or the Admin API's settings endpoint.
+
+**Scope note:** `mail.from` (decision record 3) stays as the right fix for paths that *do* fall through to `getDefaultEmail()` (e.g. staff password-reset uses `getFromAddress()` in `ghost-mailer.js`, which falls back to `emailAddress.service.defaultFromEmail` when no explicit from is requested) -- not redundant, just not sufficient on its own for member-portal mail.
+
+**Next step (pending):** set `members_support_address`, re-test member magic-link signin for robots@.
+
+
+## Decision record 5 (2026-09-14): members_support_address fixed via Admin UI
+
+**Fix applied:** Settings -> Membership -> Signup portal -> Customize -> Account page -> "Support email address" changed from `noreply@the-well-architected-cloud.com` (the ships-with-Ghost `noreply` default) to `robots@the-well-architected-cloud.com`, matching the SMTP-authenticated mailbox. Confirmed via Admin API read afterward.
+
+**Why UI, not API:** the Admin API's Custom Integration tokens are blocked from writing `/settings/` (`403 NoPermissionError: API tokens do not have permission to access this endpoint`) -- Ghost restricts settings writes to staff-session auth. Read access works fine with an integration token; writes don't.
+
+**Next step (pending):** re-test member magic-link signin for robots@the-well-architected-cloud.com end-to-end -- all four fixes (SSM credential parsing, stdout logging, mail.from, members_support_address) should now combine to make this actually work.
+
+
+## Decision record 6 (2026-09-14): mail-sending smoke test added to deploy verification
+
+**Confirmed:** magic-link signin for robots@the-well-architected-cloud.com went through end-to-end.
+
+**Decision:** every previous verification step (HTTP smoke test, Admin API image/post roundtrip) never exercised Ghost's actual mail path -- that's exactly why all four bugs above (SSM credential parsing, stdout logging, mail.from, members_support_address) went unnoticed by `deploy.sh`'s own verification until manually tested. Added `sendMagicLinkSmoke` (`phase2/packages/deploy-verify/src/mail-smoke-test.mjs`) as the final step of `verify.mjs`: fetches an integrity token then POSTs a real signin magic-link request for robots@the-well-architected-cloud.com (a real Member), and fails deploy verification (triggering the existing rollback path) if Ghost/Proton doesn't accept the send.
+
+**Scope/limit, explicit:** this only confirms Ghost's mail service accepted the send (no EAUTH/EENVELOPE/etc) -- it does not confirm actual inbox delivery, which would need a real mailbox-polling step, not attempted here.
