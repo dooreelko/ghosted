@@ -138,11 +138,18 @@ resource "aws_cloudfront_distribution" "site" {
   # The image behaviour must come before /blog* -- ordered_cache_behavior
   # blocks are matched in file order, and /blog* would otherwise shadow it.
   # Empty (and thus no-op) unless deploy_cloudfront = true.
+  #
+  # Points at the origin group below instead of the S3 origin directly --
+  # see aws_cloudfront_origin_group.images_with_app_fallback for why (moth
+  # f34h6): a size variant that's never been viewed through the app has no
+  # object in S3 yet, and S3 (behind OAC, no ListBucket) 403s rather than
+  # 404s for a missing key, so a plain S3 origin has no way to ever create
+  # the variant.
   dynamic "ordered_cache_behavior" {
     for_each = var.deploy_cloudfront ? [1] : []
     content {
       path_pattern           = "blog/content/images/*"
-      target_origin_id       = "s3-ghost-phase2-data"
+      target_origin_id       = "images-with-app-fallback"
       viewer_protocol_policy = "redirect-to-https"
       allowed_methods        = ["GET", "HEAD"]
       cached_methods         = ["GET", "HEAD"]
@@ -250,6 +257,36 @@ resource "aws_cloudfront_distribution" "site" {
       origin_id                = "s3-ghost-phase2-data"
       domain_name              = aws_s3_bucket.data.bucket_regional_domain_name
       origin_access_control_id = aws_cloudfront_origin_access_control.data[0].id
+    }
+  }
+
+  # Lets a size variant that's never been served before get generated on
+  # first request instead of 403ing forever -- see the blog/content/images/*
+  # behaviour above (moth f34h6). S3 is still the origin for every normal
+  # request (a variant that already exists); the app is only ever hit on a
+  # cache miss where S3 itself returned 403 (an object missing under an OAC
+  # policy with no ListBucket comes back as 403, not 404). Only 403 is in
+  # the failover list for now -- deliberately minimal, widen during testing
+  # if a real gap shows up rather than guessing upfront. Both member origins
+  # (s3-ghost-phase2-data, lightsail-ghost-phase2) only exist when
+  # deploy_cloudfront = true (deploy_cloudfront requires deploy_lightsail =
+  # true, see variables.tf), same gate as this group.
+  dynamic "origin_group" {
+    for_each = var.deploy_cloudfront ? [1] : []
+    content {
+      origin_id = "images-with-app-fallback"
+
+      failover_criteria {
+        status_codes = [403]
+      }
+
+      member {
+        origin_id = "s3-ghost-phase2-data"
+      }
+
+      member {
+        origin_id = "lightsail-ghost-phase2"
+      }
     }
   }
 
