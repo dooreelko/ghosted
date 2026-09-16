@@ -61,7 +61,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // `config.pool` — this must happen before `super(config)`, since the
     // base Client constructor copies `config.pool` into `this.config.pool`
     // and synchronously initializes the pool from it.
-    const acquireTimeoutMillis = config.connection?.s3?.acquireTimeoutMillis ?? 5000;
+    const acquireTimeoutMillis = config.connection?.s3?.acquireTimeoutMillis ?? 15000;
     super({ ...config, pool: { min: 1, max: 1, acquireTimeoutMillis } });
     this._acquireRetries = config.connection?.s3?.acquireRetries ?? 1;
     this._s3 = config.connection.s3 ?? registry.s3;

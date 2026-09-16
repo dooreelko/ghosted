@@ -130,7 +130,7 @@ config.set('database:connection', {
   s3: {
     ...s3Config,
     readerPoolSize: Number(process.env.SQLITE_S3_READER_POOL_SIZE ?? 4),
-    acquireTimeoutMillis: Number(process.env.SQLITE_S3_ACQUIRE_TIMEOUT_MS ?? 5000),
+    acquireTimeoutMillis: Number(process.env.SQLITE_S3_ACQUIRE_TIMEOUT_MS ?? 15000),
   },
 });
 console.error('[boot] database:client/useNullAsDefault/connection config set');

@@ -165,7 +165,13 @@ explicitly a fallback for cases A+B don't fully absorb, not the primary fix.
 
 ## Rollout
 
-Ship as one deploy via the existing
-`scripts/ssm-deploy-ghost-update.sh` pipeline (see `.local-secrets.md`
-"Ghost Custom Build Deploy Pipeline"). No DB migration, no schema change —
-pure connection-handling behavior inside `sqlite-s3`.
+Ship as one deploy via the existing `phase2/scripts/deploy.sh` pipeline
+(see `.local-secrets.md` "Ghost Custom Build Deploy Pipeline"). Every file
+this plan changes lives under `phase2/packages/*`, which only reaches
+production through the phase2 Docker image build/deploy path — not the
+phase1 Lightsail-instance ghost-cli path (`phase1/scripts/ssm-deploy-ghost-update.sh`),
+which is unrelated to this work. The phase2 Docker image COPYs whole
+package directories (no `files` whitelist), so the new `reader-client.js`
+and `restore-generation.js` modules ship automatically with no separate
+step. No DB migration, no schema change — pure connection-handling
+behavior inside `sqlite-s3`.

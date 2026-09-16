@@ -36,7 +36,7 @@ export class ReaderClient extends BetterSQLite3Client {
     // constructor) passes through untouched.
     super({
       ...config,
-      pool: { ...config.pool, acquireTimeoutMillis: config.pool?.acquireTimeoutMillis ?? config.acquireTimeoutMillis ?? 5000 },
+      pool: { ...config.pool, acquireTimeoutMillis: config.pool?.acquireTimeoutMillis ?? config.acquireTimeoutMillis ?? 15000 },
     });
   }
 

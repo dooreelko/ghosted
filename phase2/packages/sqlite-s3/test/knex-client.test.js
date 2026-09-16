@@ -278,7 +278,7 @@ test('pool is pinned to min:1, max:1 regardless of what is passed in config.pool
     pool: { min: 5, max: 20 },
   });
   try {
-    assert.deepEqual(knex.client.config.pool, { min: 1, max: 1, acquireTimeoutMillis: 5000 });
+    assert.deepEqual(knex.client.config.pool, { min: 1, max: 1, acquireTimeoutMillis: 15000 });
     assert.equal(knex.client.pool.min, 1);
     assert.equal(knex.client.pool.max, 1);
   } finally {
@@ -291,7 +291,7 @@ test('pool is pinned to min:1, max:1 regardless of what is passed in config.pool
 // pool's own Tarn config, not just the writer's -- otherwise the
 // SQLITE_S3_ACQUIRE_TIMEOUT_MS env var wired in preload.mjs would silently
 // only ever affect the writer pool, leaving the reader pool stuck on
-// ReaderClient's own hardcoded 5000ms default regardless of what's configured.
+// ReaderClient's own hardcoded 15000ms default regardless of what's configured.
 test('acquireTimeoutMillis configured on the writer also applies to the reader pool', async () => {
   const store = createInMemoryObjectStore();
   const dbPath = await tmpDbPath();
