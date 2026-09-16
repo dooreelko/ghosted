@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -67,7 +67,17 @@ export async function verifyOtcSignInSmoke(
   try {
     tmpDir = await mkdtemp(path.join(tmpdir(), 'deploy-verify-otc-'));
     const dbPath = path.join(tmpDir, 'ghost.db');
-    await dumpDb({ bucket, region, dbPath });
+    try {
+      await dumpDb({ bucket, region, dbPath });
+    } catch (err) {
+      return { ok: false, step: 'db-dump', detail: err.message };
+    }
+    // This is a full dump of the LIVE production database -- every real
+    // member's token and the members_otc_secret setting, not just the test
+    // account's row. mkdtemp's directory is already 0700, but tighten the
+    // file itself explicitly rather than relying solely on the parent mode
+    // (umask/base-image defaults vary across CI runners).
+    await chmod(dbPath, 0o600);
 
     const db = new Database(dbPath, { readonly: true });
     try {
@@ -84,7 +94,11 @@ export async function verifyOtcSignInSmoke(
       db.close();
     }
   } finally {
-    if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    if (tmpDir) {
+      await rm(tmpDir, { recursive: true, force: true }).catch((err) =>
+        console.error(`otc-signin-smoke: failed to clean up ${tmpDir} (contains a live DB dump with real secrets, leaked, delete manually): ${err.message}`),
+      );
+    }
   }
 
   const verifyResponse = await fetchImpl(`${base}/blog/members/api/verify-otc/`, {

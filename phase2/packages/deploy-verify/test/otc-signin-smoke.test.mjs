@@ -70,6 +70,15 @@ test('verifyOtcSignInSmoke reports failure when send-magic-link response has no 
   assert.equal(result.step, 'send-magic-link');
 });
 
+test('verifyOtcSignInSmoke reports a structured failure when the DB dump itself throws', async () => {
+  const { fetchImpl } = makeFetchImpl();
+  const throwingDumpDb = async () => {
+    throw new Error('S3 manifest read failed');
+  };
+  const result = await verifyOtcSignInSmoke('https://x', 'robots@x.com', { bucket: 'irrelevant' }, fetchImpl, throwingDumpDb);
+  assert.deepEqual(result, { ok: false, step: 'db-dump', detail: 'S3 manifest read failed' });
+});
+
 test('verifyOtcSignInSmoke reports failure when the tokens row is missing for otc_ref', async () => {
   const { fetchImpl } = makeFetchImpl();
   const emptyDumpDb = ({ dbPath }) => {
