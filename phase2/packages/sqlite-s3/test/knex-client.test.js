@@ -995,3 +995,38 @@ test('acquireConnection retries once on a timeout before giving up, and fails fa
     await knex.destroy();
   }
 });
+
+// Regression test for a prod incident (2026-09-16, deployments 12/13):
+// Ghost core's Settings.populateDefaults does `knex.destroy(); knex.initialize();`
+// on the SAME shared instance as a documented SQLite reconnect ("required
+// for sqlite to pick up the columns after db init"), not a final teardown.
+// knex's own `initialize()` only calls `this.client.initializePool()` on
+// the WRITER -- it has no knowledge of `_readerClient`, our own addition.
+// Without SqliteS3Client's own `initialize()` override, the reader pool's
+// `.pool` stays permanently undefined after this sequence (destroy() set it
+// undefined, nothing ever reinitializes it), so every read routed to it
+// afterward throws "Unable to acquire a connection" for the rest of the
+// process's life -- exactly the crash-loop this reproduces.
+test('a knex.destroy()+knex.initialize() cycle on the same instance (Ghost core\'s populateDefaults pattern) leaves the reader pool usable afterward', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const knex = makeKnex(dbPath, makeS3Config(store));
+  try {
+    await knex.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+    await knex('widgets').insert({ name: 'gizmo' });
+    const before = await knex('widgets').select('*'); // warms the reader pool
+    assert.equal(before.length, 1);
+
+    // Exactly what core/server/models/settings.js:populateDefaults does.
+    await knex.destroy();
+    await knex.initialize();
+
+    const after = await knex('widgets').select('*');
+    assert.equal(after.length, 1, 'a read after destroy()+initialize() must not throw "Unable to acquire a connection"');
+  } finally {
+    await knex.destroy();
+  }
+});

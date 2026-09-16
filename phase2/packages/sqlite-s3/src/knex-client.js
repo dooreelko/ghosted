@@ -93,18 +93,6 @@ export class SqliteS3Client extends BetterSQLite3Client {
       pool: { ...config.pool, min: 1, max: readerPoolSize },
       connection: { filename: config.connection.filename },
     });
-    // TEMPORARY diagnostic for a prod-only "Unable to acquire a connection"
-    // crash not reproducible locally -- remove once root-caused. Confirms
-    // whether the reader pool's tarn Pool object exists at all right after
-    // construction (the only way acquireConnection's own "if (!this.pool)"
-    // guard fires is if it never got created, or got destroyed later).
-    console.error(
-      'sqlite-s3 DIAGNOSTIC: reader pool constructed, pool=%s min=%s max=%s dbPath=%s',
-      Boolean(this._readerClient.pool),
-      this._readerClient.pool?.min,
-      this._readerClient.pool?.max,
-      config.connection.filename,
-    );
   }
 
   // Bounded retry on top of the short (config-controlled) per-attempt
@@ -141,21 +129,11 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // inside a transaction must see that transaction's own uncommitted
     // writes and stay pinned to its single held connection -- a separate
     // reader-pool connection would never observe them.
-    const routeToReader =
+    if (
       !this.transacting &&
       this._writerHasAcquired &&
-      SqliteS3Client._isReadOnlyBuilder(builder);
-    // TEMPORARY diagnostic -- remove once root-caused (see constructor).
-    if (routeToReader) {
-      console.error(
-        'sqlite-s3 DIAGNOSTIC: routing to reader, method=%s writerHasAcquired=%s readerPool=%s transacting=%s',
-        builder?._method,
-        this._writerHasAcquired,
-        Boolean(this._readerClient?.pool),
-        this.transacting,
-      );
-    }
-    if (routeToReader) {
+      SqliteS3Client._isReadOnlyBuilder(builder)
+    ) {
       runner.client = this._readerClient;
     }
     return runner;
@@ -496,11 +474,37 @@ export class SqliteS3Client extends BetterSQLite3Client {
   }
 
   async destroy() {
-    // TEMPORARY diagnostic -- remove once root-caused (see constructor).
-    console.error('sqlite-s3 DIAGNOSTIC: destroy() called, dbPath=%s', this.connectionSettings.filename, new Error().stack);
     await (pendingShips.get(this.connectionSettings.filename) ?? Promise.resolve()).catch(() => {});
     await this._readerClient.destroy();
     return super.destroy();
+  }
+
+  // Ghost core's Settings.populateDefaults ("this is required for sqlite to
+  // pick up the columns after db init") does `knex.destroy()` then
+  // `knex.initialize()` on the SAME shared knex instance as a reconnect, not
+  // a final teardown. knex's public `initialize()` (make-knex.js) calls
+  // `this.client.initializePool(config)` DIRECTLY -- not `this.client
+  // .initialize(...)` -- so overriding `initialize` here would never even
+  // run; `initializePool` is the actual method that needs overriding.
+  // Base `initializePool` only rebuilds the WRITER's own pool, with zero
+  // knowledge of `_readerClient`, our own addition. Without this override,
+  // the writer's pool comes back but the reader pool stays permanently
+  // undefined after that point (destroy() sets `this.pool = undefined`, and
+  // nothing ever calls initializePool on it again) -- every subsequent read
+  // routed to it throws "Unable to acquire a connection" for the rest of
+  // the process's life. Reproduced and root-caused against real prod boot
+  // logs, 2026-09-16 (deployments 12/13).
+  initializePool(config) {
+    const result = super.initializePool(config);
+    // `initializePool` also fires once from inside the base Client
+    // constructor (via `super(config)`, before `this._readerClient` is
+    // constructed a few lines later in THIS class's own constructor) -- on
+    // that very first call there is nothing to reinitialize; the reader
+    // gets its own fresh pool naturally when it's constructed. Only a LATER
+    // call (Ghost's destroy()+initialize() reconnect) needs to also revive
+    // the reader.
+    this._readerClient?.initializePool();
+    return result;
   }
 
   transaction(container, config, outerTx) {
