@@ -87,3 +87,37 @@ Two follow-on hardenings added after the main fix, same branch:
   actually completed.
 
 Not run `moth done`/`moth start` — awaiting review/merge decision.
+
+
+## Post-implementation regression found and fixed (2026-09-16)
+
+Real deploy (Lightsail deployment 12, then 13) crash-looped on every boot:
+`Unable to acquire a connection` from `ReaderClient` (Task 4's reader pool).
+Not caught by any unit/e2e test or review pass — root cause needed live
+prod diagnostics (no SSM/shell access to the Lightsail container; iterated
+via temporary diagnostic logging + redeploy instead).
+
+Root cause: Ghost core's `Settings.populateDefaults()`
+(`core/server/models/settings.js:355`, comment: "this is required for
+sqlite to pick up the columns after db init") does `await
+ghostBookshelf.knex.destroy(); await ghostBookshelf.knex.initialize();` on
+the SAME shared knex instance as a documented reconnect, not a final
+teardown. knex's public `initialize()` calls `client.initializePool(config)`
+directly, and base `initializePool` only ever rebuilds the WRITER's own
+pool — it has no knowledge of `_readerClient`, Task 4's own addition.
+`destroy()` correctly tore the reader down too, but nothing ever revived
+it, so every read routed to the reader pool for the rest of that process's
+life threw the same error.
+
+Fixed by overriding `initializePool` (not `initialize` — that's the wrong
+method, confirmed by tracing knex's own `make-knex.js`) to also
+reinitialize `_readerClient`'s pool, guarded to no-op on the writer's own
+construction-time call. Reproduced locally by mirroring Ghost core's exact
+`destroy()+initialize()` sequence in a new regression test — confirmed red
+without the fix, green with it. Diagnostics that pinpointed this were
+temporary and removed once root-caused.
+
+Deployment 13 was the failed attempt with diagnostics; the real fix has
+not yet been deployed as of this note. Old version (11) has been serving
+throughout — no user-facing outage from this regression, only a blocked
+deploy pipeline.
