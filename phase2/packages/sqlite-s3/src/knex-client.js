@@ -61,7 +61,9 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // `config.pool` — this must happen before `super(config)`, since the
     // base Client constructor copies `config.pool` into `this.config.pool`
     // and synchronously initializes the pool from it.
-    super({ ...config, pool: { min: 1, max: 1 } });
+    const acquireTimeoutMillis = config.connection?.s3?.acquireTimeoutMillis ?? 5000;
+    super({ ...config, pool: { min: 1, max: 1, acquireTimeoutMillis } });
+    this._acquireRetries = config.connection?.s3?.acquireRetries ?? 1;
     this._s3 = config.connection.s3 ?? registry.s3;
     // I1: guards around the fire-and-forget checkpoint kick-off in
     // _maybeKickOffCheckpoint -- see there for why checkpointing must not run
@@ -90,6 +92,24 @@ export class SqliteS3Client extends BetterSQLite3Client {
       pool: { ...config.pool, min: 1, max: readerPoolSize },
       connection: { filename: config.connection.filename },
     });
+  }
+
+  // Bounded retry on top of the short (config-controlled) per-attempt
+  // acquire timeout set above: a single held-too-long writer connection
+  // (the pool is pinned to max:1) should fail a caller fast rather than
+  // hang for tarn's ~30s default, but one retry absorbs a connection that
+  // frees up moments after the first attempt's timeout rather than
+  // surfacing a spurious failure for that common case.
+  async acquireConnection() {
+    let lastErr;
+    for (let attempt = 0; attempt <= this._acquireRetries; attempt += 1) {
+      try {
+        return await super.acquireConnection();
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr;
   }
 
   // Routes plain reads to the reader pool, everything else (writes, schema

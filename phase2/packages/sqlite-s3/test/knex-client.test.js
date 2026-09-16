@@ -278,7 +278,7 @@ test('pool is pinned to min:1, max:1 regardless of what is passed in config.pool
     pool: { min: 5, max: 20 },
   });
   try {
-    assert.deepEqual(knex.client.config.pool, { min: 1, max: 1 });
+    assert.deepEqual(knex.client.config.pool, { min: 1, max: 1, acquireTimeoutMillis: 5000 });
     assert.equal(knex.client.pool.min, 1);
     assert.equal(knex.client.pool.max, 1);
   } finally {
@@ -944,5 +944,31 @@ test('two independent SqliteS3Client instances on the same db path: instance A\'
     );
   } finally {
     await knexA.destroy();
+  }
+});
+
+test('acquireConnection retries once on a timeout before giving up, and fails fast rather than hanging 30s', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const s3Config = { ...makeS3Config(store), acquireTimeoutMillis: 200, acquireRetries: 1 };
+  const knex = makeKnex(dbPath, s3Config);
+  try {
+    await knex.schema.createTable('widgets', (t) => t.increments('id'));
+
+    // Hold the only writer connection open so every other acquire attempt
+    // genuinely times out.
+    const held = await knex.client.pool.acquire().promise;
+    try {
+      const startedAt = Date.now();
+      await assert.rejects(() => knex('widgets').insert({}));
+      const elapsed = Date.now() - startedAt;
+      // Two attempts at ~200ms each, not the old ~30s default.
+      assert.ok(elapsed < 2000, `expected fast failure well under 2s, took ${elapsed}ms`);
+      assert.ok(elapsed >= 200, 'must have actually attempted at least once, not failed instantly');
+    } finally {
+      knex.client.pool.release(held);
+    }
+  } finally {
+    await knex.destroy();
   }
 });

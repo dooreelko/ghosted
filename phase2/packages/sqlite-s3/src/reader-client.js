@@ -29,8 +29,15 @@ export class ReaderClient extends BetterSQLite3Client {
   constructor(config) {
     // Pool size is caller-controlled (unlike the writer, which MUST stay
     // pinned to one connection) -- SQLite's WAL mode natively supports many
-    // concurrent readers alongside the one writer.
-    super(config);
+    // concurrent readers alongside the one writer. Only ensure
+    // acquireTimeoutMillis has a default (same fail-fast rationale as the
+    // writer's own pinned pool config in knex-client.js) -- everything else
+    // in `config.pool` (notably `min`/`max`, already set by SqliteS3Client's
+    // constructor) passes through untouched.
+    super({
+      ...config,
+      pool: { ...config.pool, acquireTimeoutMillis: config.pool?.acquireTimeoutMillis ?? config.acquireTimeoutMillis ?? 5000 },
+    });
   }
 
   async acquireRawConnection() {
