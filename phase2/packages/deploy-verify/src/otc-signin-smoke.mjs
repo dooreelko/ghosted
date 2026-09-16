@@ -129,12 +129,17 @@ export async function verifyOtcSignInSmoke(
 
   // Hitting the redirect URL is what actually completes sign-in (sets the
   // member session cookie) -- verify-otc alone only proves the code was
-  // accepted, not that the resulting session establishes. Ghost's own
-  // members frontend handles this token GET directly (200, not a 3xx --
-  // confirmed against the real incident's own access logs), so a plain
-  // fetch is enough; no redirect-following needed.
-  const signinResponse = await fetchImpl(redirectUrl);
-  if (!signinResponse.ok) {
+  // accepted, not that the resulting session establishes. Ghost core's
+  // createSessionFromMagicLink (middleware.js) sets the cookie and then
+  // does a real res.redirect() -- a 302, not a 200 (confirmed by reading
+  // the source; found on a real deploy after `redirect: 'follow'`'s default
+  // auto-following silently discarded the intermediate 302's own Set-Cookie
+  // header, since the response object inspected afterward is the FINAL
+  // one, not the redirect hop that actually carries it). `redirect:
+  // 'manual'` stops fetch from following, so this inspects the 302 itself.
+  const signinResponse = await fetchImpl(redirectUrl, { redirect: 'manual' });
+  const isRedirect = signinResponse.status >= 300 && signinResponse.status < 400;
+  if (!signinResponse.ok && !isRedirect) {
     return { ok: false, step: 'signin-redirect', status: signinResponse.status };
   }
   const setCookie = signinResponse.headers?.get?.('set-cookie') ?? signinResponse.headers?.['set-cookie'];

@@ -57,7 +57,9 @@ function makeFetchImpl({ verifyOtcHandler } = {}) {
       return { ok: true, status: 200, json: async () => ({ redirectUrl: 'https://x/blog/members/?token=abc&action=signin' }) };
     }
     if (url.includes('/members/?token=')) {
-      return { ok: true, status: 200, headers: { get: (h) => (h === 'set-cookie' ? 'ghost-members-ssr=abc' : undefined) } };
+      // Ghost core's createSessionFromMagicLink sets the cookie then does a
+      // real res.redirect() -- a 302, not a 200 (see src comment).
+      return { ok: false, status: 302, headers: { get: (h) => (h === 'set-cookie' ? 'ghost-members-ssr=abc' : undefined) } };
     }
     throw new Error(`unexpected fetch to ${url}`);
   };
