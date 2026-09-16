@@ -161,3 +161,15 @@ by an actual deploy attempt reaching further than the last — `findPreviousTag`
 fix is holding up (two consecutive rollbacks now correctly targeted
 `90fb07e`, the known-good sqlite fix). Prod confirmed healthy throughout:
 deployment 19 ACTIVE, 200 OK.
+
+
+## Deployed successfully (2026-09-16)
+
+Full pipeline green: e2e gate passed, build/push, tofu apply, post-deploy
+verification (admin API roundtrip + full 6-digit-code sign-in) all passed.
+`{"ok":true}` — `c0b229e` is live and verified. No rollback needed.
+
+Fix confirmed live in production: the connection-release fix (B), reader
+pool (A), fail-fast timeout (C), the atomic-restore prerequisite, the
+e2e deploy gate, and the post-deploy OTC sign-in check are all deployed
+and working end to end against real infrastructure.
