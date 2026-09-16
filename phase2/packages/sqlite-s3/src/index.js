@@ -1,4 +1,5 @@
 export { SqliteS3Client, registerS3Config } from './knex-client.js';
+export { ReaderClient } from './reader-client.js';
 export { createManifestStore, ManifestConflictError } from './manifest.js';
 export { createSegmentStore } from './segments.js';
 export { createLeaseStore } from './leases.js';

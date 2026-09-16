@@ -794,3 +794,54 @@ test('N sequential awaited inserts are all visible after a restore, even with la
   }
   await knexB.destroy();
 });
+
+test('SqliteS3Client routes read-only queries to the reader pool, everything else to the writer pool', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const s3Config = { ...makeS3Config(store), readerPoolSize: 2 };
+  const knex = knexFactory({
+    client: SqliteS3Client,
+    connection: { filename: dbPath, s3: s3Config },
+    useNullAsDefault: true,
+  });
+  try {
+    await knex.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+    await knex('widgets').insert({ name: 'gizmo' });
+
+    // A read must not queue behind a held writer-pool connection: acquire
+    // the writer connection directly and hold it open, then verify a
+    // concurrent SELECT still completes promptly via the reader pool.
+    const writerClient = knex.client;
+    const heldConnection = await writerClient.acquireConnection();
+    try {
+      const startedAt = Date.now();
+      const rows = await knex('widgets').select('*');
+      assert.ok(Date.now() - startedAt < 500, 'read queued behind the held writer connection instead of using the reader pool');
+      assert.equal(rows.length, 1);
+    } finally {
+      await writerClient.releaseConnection(heldConnection);
+    }
+  } finally {
+    await knex.destroy();
+  }
+});
+
+test('a write is never routed to the reader pool even while it is idle', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const knex = makeKnex(dbPath, { ...makeS3Config(store), readerPoolSize: 2 });
+  try {
+    await knex.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+    await knex('widgets').insert({ name: 'gizmo' });
+    const rows = await knex('widgets').select('*');
+    assert.equal(rows.length, 1, 'the insert must be visible to a same-process read — proving it landed on the writer, not a stale reader-pool connection opened before the insert');
+  } finally {
+    await knex.destroy();
+  }
+});

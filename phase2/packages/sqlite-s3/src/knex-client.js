@@ -6,6 +6,7 @@ import { createCommitter, fullJitterDelay } from './commit.js';
 import { parseWalHeader, parseFrames } from './wal.js';
 import { extractPageImages, encodePageImages } from './page-images.js';
 import { performCheckpoint } from './checkpoint.js';
+import { ReaderClient } from './reader-client.js';
 
 // Some hosts (observed with Ghost + knex-migrator) construct additional Knex
 // clients from an independently re-derived copy of the connection config
@@ -66,6 +67,64 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // inline (awaited) on the write path.
     this._checkpointInFlight = false;
     this._nextCheckpointAttemptAt = 0;
+    // Guards routing reads to the reader pool before the writer has ever
+    // restored the local file at least once (see acquireRawConnection,
+    // which flips this true). ReaderClient never restores from S3 itself —
+    // it only ever opens whatever is already on disk — so if a read were
+    // the very first query this instance ever ran, routing it straight to
+    // the reader pool would read (or silently create) an empty/stale local
+    // file instead of triggering the writer's restore. Once this flips
+    // true it stays true: after the writer's first acquire, the local file
+    // is guaranteed current or newer for the rest of this instance's life.
+    this._writerHasAcquired = false;
+
+    // A separate, real multi-connection pool for read-only queries so a page
+    // read never queues behind a held writer connection (the writer pool is
+    // pinned to max:1 -- see above). Points at the SAME on-disk file the
+    // writer maintains; see reader-client.js's doc comment for why opening
+    // it concurrently with the writer (including mid-restore) is safe.
+    const readerPoolSize = config.connection?.s3?.readerPoolSize ?? config.readerPoolSize ?? 4;
+    this._readerClient = new ReaderClient({
+      ...config,
+      pool: { min: 1, max: readerPoolSize },
+      connection: { filename: config.connection.filename },
+    });
+  }
+
+  // Routes plain reads to the reader pool, everything else (writes, schema
+  // DDL, raw SQL, transactions) stays on the writer pool via the inherited
+  // runner. See _isReadOnlyBuilder for the conservative-by-construction
+  // classification.
+  runner(builder) {
+    const runner = super.runner(builder);
+    // `this.transacting` is set (true) only on the constructor-less
+    // "trxClient" clone Knex builds for the life of a transaction (see
+    // makeTxClient in knex's transaction.js) -- never on the real,
+    // fully-constructed instance. Two independent reasons this must stay on
+    // the writer: (1) that clone has no `_readerClient` of its own (it's
+    // Object.create()'d, never run through this constructor), so routing
+    // would hand the runner an undefined client; (2) even if it did, a read
+    // inside a transaction must see that transaction's own uncommitted
+    // writes and stay pinned to its single held connection -- a separate
+    // reader-pool connection would never observe them.
+    if (
+      !this.transacting &&
+      this._writerHasAcquired &&
+      SqliteS3Client._isReadOnlyBuilder(builder)
+    ) {
+      runner.client = this._readerClient;
+    }
+    return runner;
+  }
+
+  // Conservative by construction: anything that isn't recognizably a plain
+  // read (missing `_method`, e.g. a SchemaBuilder or Raw query, or a
+  // `_method` outside the known read-only set) stays on the writer pool.
+  // Misrouting a write to the reader pool would be a correctness bug;
+  // misrouting a read to the writer pool only costs a little contention.
+  static _isReadOnlyBuilder(builder) {
+    const READ_ONLY_METHODS = new Set(['select', 'first', 'pluck', 'columnInfo']);
+    return typeof builder?._method === 'string' && READ_ONLY_METHODS.has(builder._method);
   }
 
   async acquireRawConnection() {
@@ -88,6 +147,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // correctness, only visibility), so callers that don't care about
     // restore metrics don't have to wire anything.
     this._s3.onRestoreComplete?.(restoreStats);
+    this._writerHasAcquired = true;
     const connection = await super.acquireRawConnection();
     // Commit capture reads deltas out of the `-wal` file, so the connection
     // must run in WAL journal mode (better-sqlite3 defaults to rollback-journal
@@ -373,6 +433,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
 
   async destroy() {
     await (pendingShips.get(this.connectionSettings.filename) ?? Promise.resolve()).catch(() => {});
+    await this._readerClient.destroy();
     return super.destroy();
   }
 
