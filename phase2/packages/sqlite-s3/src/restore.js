@@ -1,4 +1,4 @@
-import { rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile, rename } from 'node:fs/promises';
 import { buildMergedFileBytes } from './merge.js';
 
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -12,7 +12,6 @@ export async function restoreLocalDb({
   leaseTtlMs = 5 * 60_000,
   maxAttempts = DEFAULT_MAX_ATTEMPTS,
 }) {
-  await rm(dbPath, { force: true });
   await rm(`${dbPath}-wal`, { force: true });
   await rm(`${dbPath}-shm`, { force: true });
 
@@ -35,7 +34,9 @@ export async function restoreLocalDb({
     const lease = await leaseStore.acquire(currentManifest, { ttlMs: leaseTtlMs });
     try {
       const fileBytes = await buildMergedFileBytes({ manifest: currentManifest, segmentStore });
-      await writeFile(dbPath, fileBytes);
+      const tmpPath = `${dbPath}.tmp-${process.pid}-${Date.now()}`;
+      await writeFile(tmpPath, fileBytes);
+      await rename(tmpPath, dbPath); // atomic on the same filesystem — readers see the old or new file, never a torn one
       return { attempts: attempt + 1, durationMs: Date.now() - startedAt };
     } catch (err) {
       if (err.code !== 'NotFound' || attempt === maxAttempts - 1) throw err;

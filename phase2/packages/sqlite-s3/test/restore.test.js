@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, stat, copyFile } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, copyFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
@@ -389,4 +389,56 @@ test('restoreLocalDb gives up after maxAttempts and rethrows if the segment neve
     (err) => err.code === 'NotFound'
   );
   assert.equal(readCount, 2, 'must re-read the manifest on every retry (maxAttempts - 1 times) before giving up, proving retries actually happened');
+});
+
+test('restoreLocalDb never leaves dbPath missing or truncated to a reader racing the restore (atomic swap)', async () => {
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
+  const manifestStore = createManifestStore(objectStore);
+  const pageSize = 16;
+  // Create a buffer with proper SQLite header so merge.js can validate the page size.
+  // SQLite header: bytes 0-15 are magic string, bytes 16-17 are page size.
+  const payload = Buffer.alloc(pageSize * 4, 0xab);
+  const sqliteHeader = Buffer.from('SQLite format 3\0');
+  sqliteHeader.copy(payload, 0);
+  payload.writeUInt16BE(pageSize, 16); // page size at bytes 16-17
+
+  const baseSegmentId = await segmentStore.putSegment(payload);
+  const manifest = { baseSegmentId, walSegmentIds: [], pageSize };
+
+  const dbPath = await tmpPath('atomic-swap.db');
+  // Seed an existing file first, matching a real restore-of-an-existing-connection.
+  // Allocate at least 18 bytes to hold the SQLite header and page size field.
+  const oldSize = Math.max(pageSize, 18);
+  const oldPayload = Buffer.alloc(oldSize, 0x00);
+  const oldHeader = Buffer.from('SQLite format 3\0');
+  oldHeader.copy(oldPayload, 0);
+  oldPayload.writeUInt16BE(pageSize, 16);
+  await writeFile(dbPath, oldPayload);
+
+  let sawMissingOrShortRead = false;
+  let keepPolling = true;
+  const poller = (async () => {
+    while (keepPolling) {
+      try {
+        const bytes = await readFile(dbPath);
+        // Reader should only see old complete file or new complete file
+        if (bytes.length !== oldPayload.length && bytes.length !== payload.length) {
+          sawMissingOrShortRead = true;
+        }
+      } catch (err) {
+        if (err.code === 'ENOENT') sawMissingOrShortRead = true;
+        else throw err;
+      }
+    }
+  })();
+
+  await restoreLocalDb({ manifest, manifestStore, segmentStore, leaseStore, dbPath });
+  keepPolling = false;
+  await poller;
+
+  assert.equal(sawMissingOrShortRead, false, 'a concurrent reader must only ever see the old complete file or the new complete file, never missing/partial');
+  const finalBytes = await readFile(dbPath);
+  assert.deepEqual(finalBytes, payload);
 });
