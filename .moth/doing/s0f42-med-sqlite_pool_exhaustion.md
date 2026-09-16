@@ -121,3 +121,25 @@ Deployment 13 was the failed attempt with diagnostics; the real fix has
 not yet been deployed as of this note. Old version (11) has been serving
 throughout — no user-facing outage from this regression, only a blocked
 deploy pipeline.
+
+
+## Deploy pipeline shakeout (2026-09-16, continued)
+
+Real deploy confirmed the sqlite-s3 fix itself is good: deployment 14
+(tag `90fb07e`, includes the destroy()+initialize() reader-pool fix) booted
+clean, no crash, currently ACTIVE and serving. Two separate bugs surfaced
+in the surrounding deploy tooling during this same run, both fixed and
+tested:
+
+1. `otc-signin-smoke.mjs`'s `send-magic-link` request never set
+   `includeOTC: true` — Ghost core silently never returns `otc_ref`
+   without it (no error). Every deploy that reached verification would
+   fail this check.
+2. `findPreviousTag` picked the second-newest deployment by version number
+   with no regard for `state`, so a rollback after this could land on an
+   earlier FAILED deployment's tag instead of the last one that actually
+   served traffic — confirmed: it picked deployment 13's tag (an old
+   diagnostic-only build), which crash-looped the same way and made the
+   rollback itself fail too. Now skips FAILED deployments.
+
+Neither bug touched the sqlite-s3 fix. Fixes committed, not yet deployed.
