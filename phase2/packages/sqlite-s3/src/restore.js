@@ -18,7 +18,9 @@ export async function restoreLocalDb({
   let currentManifest = manifest;
   const hasWalSegments = currentManifest && currentManifest.walSegmentIds && currentManifest.walSegmentIds.length > 0;
   if (!currentManifest || (!currentManifest.baseSegmentId && !hasWalSegments)) {
-    return { attempts: 0, durationMs: 0 }; // truly nothing to restore — a fresh database
+    // truly nothing to restore — a fresh database. clear any stale file on disk.
+    await rm(dbPath, { force: true });
+    return { attempts: 0, durationMs: 0 };
   }
 
   const startedAt = Date.now();
@@ -35,8 +37,14 @@ export async function restoreLocalDb({
     try {
       const fileBytes = await buildMergedFileBytes({ manifest: currentManifest, segmentStore });
       const tmpPath = `${dbPath}.tmp-${process.pid}-${Date.now()}`;
-      await writeFile(tmpPath, fileBytes);
-      await rename(tmpPath, dbPath); // atomic on the same filesystem — readers see the old or new file, never a torn one
+      try {
+        await writeFile(tmpPath, fileBytes);
+        await rename(tmpPath, dbPath); // atomic on the same filesystem — readers see the old or new file, never a torn one
+      } catch (writeErr) {
+        // best-effort cleanup of temp file on write/rename failure (e.g., disk full)
+        await rm(tmpPath, { force: true }).catch(() => {});
+        throw writeErr;
+      }
       return { attempts: attempt + 1, durationMs: Date.now() - startedAt };
     } catch (err) {
       if (err.code !== 'NotFound' || attempt === maxAttempts - 1) throw err;

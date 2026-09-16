@@ -39,6 +39,23 @@ test('restoreLocalDb with a null manifest leaves no files (fresh db)', async () 
   assert.deepEqual(result, { attempts: 0, durationMs: 0 }, 'a fresh db never actually fetched anything');
 });
 
+test('restoreLocalDb with a null manifest clears stale files on disk (early-return branch)', async () => {
+  const dbPath = await tmpPath('stale-file.db');
+  // Seed an existing stale file, simulating a prior connection's local db left behind
+  await writeFile(dbPath, Buffer.from('stale content'));
+
+  const objectStore = createInMemoryObjectStore();
+  const segmentStore = createSegmentStore(objectStore);
+  const leaseStore = createLeaseStore(objectStore);
+  const manifestStore = createManifestStore(objectStore);
+
+  const result = await restoreLocalDb({ manifest: null, manifestStore, segmentStore, leaseStore, dbPath });
+
+  // File must be cleared even though manifest is null/empty (early return branch)
+  await assert.rejects(() => stat(dbPath), (err) => err.code === 'ENOENT', 'stale file must be cleared on null manifest');
+  assert.deepEqual(result, { attempts: 0, durationMs: 0 });
+});
+
 test('restoreLocalDb reports attempts and durationMs on a successful restore', async () => {
   const objectStore = createInMemoryObjectStore();
   const segmentStore = createSegmentStore(objectStore);
