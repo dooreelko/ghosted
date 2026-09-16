@@ -6,7 +6,7 @@ import { checkUrls } from '../src/http-smoke-test.mjs';
 import { generateAdminToken } from '../src/admin-token.mjs';
 import { uploadImage, createDraftPost, getPost, deletePost } from '../src/admin-api-client.mjs';
 import { deleteS3Object } from '../src/s3-object-delete.mjs';
-import { sendMagicLinkSmoke } from '../src/mail-smoke-test.mjs';
+import { verifyOtcSignInSmoke } from '../src/otc-signin-smoke.mjs';
 
 const MAIL_SMOKE_TEST_MEMBER_EMAIL = 'robots@the-well-architected-cloud.com';
 
@@ -92,9 +92,13 @@ async function main() {
     process.exit(1);
   }
 
-  const mailSmoke = await sendMagicLinkSmoke(base, MAIL_SMOKE_TEST_MEMBER_EMAIL);
-  if (!mailSmoke.ok) {
-    console.log(JSON.stringify({ ok: false, step: 'mail-smoke-test', detail: mailSmoke }));
+  // Exercises the full 6-digit-code sign-in path end to end (moth s0f42's
+  // own incident flow) -- not just that the email send was accepted, but
+  // that the code Ghost would have emailed actually completes sign-in. See
+  // otc-signin-smoke.mjs for how the code is derived without reading mail.
+  const otcSignin = await verifyOtcSignInSmoke(base, MAIL_SMOKE_TEST_MEMBER_EMAIL, { bucket });
+  if (!otcSignin.ok) {
+    console.log(JSON.stringify({ ok: false, step: 'otc-signin-smoke', detail: otcSignin }));
     process.exit(1);
   }
 
