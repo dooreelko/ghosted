@@ -552,3 +552,96 @@ test('a rolled-back transaction does not inflate the write-set of a later, separ
     await knex.destroy();
   }
 });
+
+test('the connection is released back to the pool before the S3 upload for that write completes', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+
+  // A segmentStore whose putSegment() we can stall, so we can observe pool
+  // state WHILE a ship is still in flight.
+  const realSegmentStore = createSegmentStore(store);
+  let releasePut;
+  const stallOnce = new Promise((resolve) => { releasePut = resolve; });
+  let putCalls = 0;
+  const segmentStore = {
+    ...realSegmentStore,
+    putSegment: async (...args) => {
+      putCalls += 1;
+      if (putCalls === 1) await stallOnce;
+      return realSegmentStore.putSegment(...args);
+    },
+  };
+  const s3Config = {
+    manifestStore: createManifestStore(store),
+    segmentStore,
+    leaseStore: createLeaseStore(store),
+    checkpointPolicy: createCheckpointPolicy({ maxWalBytes: 10_000_000, maxIntervalMs: 3_600_000 }),
+  };
+  const knex = makeKnex(dbPath, s3Config);
+  try {
+    await knex.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+
+    // This insert's ship (putSegment) is now stalled mid-flight. If the
+    // connection were still held for the ship's duration, a second query
+    // issued right now would hang until stallOnce resolves. Assert it
+    // does NOT hang.
+    const insertDone = knex('widgets').insert({ name: 'gizmo' });
+    await new Promise((resolve) => setTimeout(resolve, 20)); // let the insert's capture phase run
+
+    const secondQueryStarted = Date.now();
+    const rows = await knex('widgets').select('*'); // must not queue behind the stalled ship
+    assert.ok(Date.now() - secondQueryStarted < 500, 'second query queued behind the in-flight S3 upload');
+    assert.deepEqual(rows, []); // the stalled insert hasn't shipped/wouldn't even need to have landed to prove non-blocking
+
+    releasePut();
+    await insertDone;
+  } finally {
+    await knex.destroy();
+  }
+});
+
+test('acquireRawConnection waits for the previous connection\'s pending ship before restoring (ordering constraint)', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPathA = await tmpDbPath();
+
+  const realManifestStore = createManifestStore(store);
+  let releaseWrite;
+  const stallOnce = new Promise((resolve) => { releaseWrite = resolve; });
+  let writeCalls = 0;
+  const manifestStore = {
+    ...realManifestStore,
+    write: async (...args) => {
+      writeCalls += 1;
+      if (writeCalls === 1) await stallOnce;
+      return realManifestStore.write(...args);
+    },
+  };
+  const s3Config = {
+    manifestStore,
+    segmentStore: createSegmentStore(store),
+    leaseStore: createLeaseStore(store),
+    checkpointPolicy: createCheckpointPolicy({ maxWalBytes: 10_000_000, maxIntervalMs: 3_600_000 }),
+  };
+  const knexA = makeKnex(dbPathA, s3Config);
+  await knexA.schema.createTable('widgets', (t) => {
+    t.increments('id');
+    t.string('name');
+  });
+  const insertDone = knexA('widgets').insert({ name: 'gizmo' }); // ship stalls on manifestStore.write
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  releaseWrite();
+  await insertDone;
+  await knexA.destroy(); // must wait for the pending ship internally, not leave it dangling
+
+  // A fresh instance restoring from the same S3 state must see the shipped row —
+  // proving destroy()/the next acquire didn't restore before the ship landed.
+  const dbPathB = await tmpDbPath();
+  const knexB = makeKnex(dbPathB, { ...s3Config, manifestStore: realManifestStore });
+  const rows = await knexB('widgets').select('*');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'gizmo');
+  await knexB.destroy();
+});

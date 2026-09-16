@@ -24,6 +24,32 @@ export function registerS3Config(s3Config) {
   registry.s3 = s3Config;
 }
 
+// Module-level, keyed by db path (this.connectionSettings.filename): for a
+// given local db file, at most one physical connection exists at a time
+// (pool is pinned to max:1), so tracking one in-flight ship per db path is
+// equivalent to tracking one per connection, and survives the connection
+// object itself being discarded/disposed before its ship resolves.
+//
+// This must be keyed per db path, NOT a single process-wide scalar: more
+// than one independent SqliteS3Client pool can be alive in the same
+// process (Ghost + a separately-constructed knex-migrator pool per the
+// constructor's comment above; this package's own tests construct a second,
+// unrelated pool mid-ship to simulate an out-of-band writer). A single
+// shared scalar makes one pool's acquire wait on a completely unrelated
+// pool's ship, and can even deadlock: observed directly when a ship on pool
+// A synchronously depends (via a stubbed store call) on a query against
+// pool B, and pool B's acquire in turn waits on pool A's still-in-flight
+// ship.
+const pendingShips = new Map(); // dbPath -> promise, never rejects
+// Same lifecycle as `pendingShips`, but rejects (rather than swallowing) on
+// a failed ship. `_reconcilingTransaction` below needs to observe a
+// conflict that's only discovered AFTER super.transaction() has already
+// resolved (the COMMIT's ship is kicked off asynchronously, so it can still
+// be in flight when the transaction promise settles) — `pendingShips` can't
+// be used for that since it deliberately never rejects (acquireRawConnection
+// and destroy() just need to wait for quiescence, not observe the outcome).
+const lastShips = new Map(); // dbPath -> promise, rejects on ship failure
+
 export class SqliteS3Client extends BetterSQLite3Client {
   constructor(config) {
     // This package's commit-capture logic assumes exactly one physical
@@ -46,6 +72,11 @@ export class SqliteS3Client extends BetterSQLite3Client {
   }
 
   async acquireRawConnection() {
+    // Never restore while a previous connection's ship is still deciding
+    // whether this write's bytes are durable (and whether it was a
+    // conflict) -- restoring now could read stale S3 state and silently
+    // lose the pending write, or race the disposal flag the ship sets.
+    await (pendingShips.get(this.connectionSettings.filename) ?? Promise.resolve()).catch(() => {}); // errors are already logged where the ship runs; don't let them fail an unrelated new connection's acquire
     const { manifest, etag } = await this._s3.manifestStore.read();
     this._manifest = manifest;
     const restoreStats = await restoreLocalDb({
@@ -98,28 +129,46 @@ export class SqliteS3Client extends BetterSQLite3Client {
   async _query(connection, obj) {
     const result = await super._query(connection, obj);
     if (connection.inTransaction === false) {
-      await this._maybeCaptureCommit(connection);
+      this._captureAndScheduleShip(connection);
     }
     return result;
   }
 
-  async _maybeCaptureCommit(connection) {
-    // Some Knex-internal code paths invoke this method with `this` bound to
-    // an object that shares SqliteS3Client's prototype (so method lookup
-    // resolves) but was never run through `new SqliteS3Client(...)` — e.g. a
-    // lightweight clone Knex derives internally for pooling/transactions,
-    // observed in practice from knex-migrator's own connection handling. Such
-    // an object has none of this class's constructor-set instance state.
+  _captureAndScheduleShip(connection) {
     // The S3 wiring is process-wide by nature (one Ghost process, one S3
     // bucket), so read it from the module-level registry directly rather
-    // than trusting `this._s3` — that's robust regardless of what `this` is.
+    // than trusting `this._s3` — some Knex-internal code paths invoke this
+    // method with `this` bound to an object that shares SqliteS3Client's
+    // prototype but was never run through `new SqliteS3Client(...)` (see
+    // acquireRawConnection's comments), so `this._s3` may be unset on it.
     const s3 = this._s3 ?? registry.s3;
+    const captured = this._captureWalDelta(connection, s3);
+    if (!captured) return; // nothing new to ship (see _captureWalDelta's early returns)
+
+    const dbPath = this.connectionSettings.filename;
+    const shipAttempt = this._shipCapturedDelta(connection, s3, captured).catch((err) => {
+      // The caller that made this write has already gotten its response by
+      // now -- there is no request left to reject. Log and mark the
+      // connection disposed (same recovery path _maybeCaptureCommit used
+      // to trigger synchronously) so the next acquire restores fresh.
+      console.error('sqlite-s3: async commit ship failed:', err.message);
+      if (connection) connection.__knex__disposed = err;
+      throw err; // re-thrown so `lastShips` (below) still rejects for _reconcilingTransaction to observe
+    });
+    lastShips.set(dbPath, shipAttempt);
+    pendingShips.set(dbPath, shipAttempt.catch(() => {})); // never-rejecting variant for acquireRawConnection/destroy gating
+  }
+
+  // Local-only: read the WAL delta off disk, identify the last committed
+  // boundary, extract page images. Returns null if there's nothing new to
+  // ship (no WAL growth, or no committed boundary in the delta yet).
+  _captureWalDelta(connection, s3) {
     const walPath = `${this.connectionSettings.filename}-wal`;
     let size;
     try {
       size = statSync(walPath).size;
     } catch {
-      return; // no WAL file yet (e.g. a read-only autocommit statement before any write)
+      return null; // no WAL file yet (e.g. a read-only autocommit statement before any write)
     }
     // Capture progress lives on the CONNECTION (see acquireRawConnection),
     // not on `this` — `this` can be a constructor-less trxClient clone Knex
@@ -129,7 +178,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // undefined into arithmetic (undefined - number = NaN => Buffer.alloc(NaN)).
     const state = connection.__sqliteS3State ?? { lastWalOffset: 0, pageSize: null, baseline: { manifest: null, etag: null } };
     const lastWalOffset = state.lastWalOffset ?? 0;
-    if (size <= lastWalOffset) return;
+    if (size <= lastWalOffset) return null;
 
     const delta = Buffer.alloc(size - lastWalOffset);
     const fd = openSync(walPath, 'r');
@@ -161,7 +210,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     }
     if (lastCommitFrameIndex === -1) {
       // No committed-transaction boundary in this delta yet — nothing to ship.
-      return;
+      return null;
     }
     const lastCommitFrame = allFrames[lastCommitFrameIndex];
     const trimEnd = lastCommitFrame.offset + lastCommitFrame.length;
@@ -175,6 +224,17 @@ export class SqliteS3Client extends BetterSQLite3Client {
     const pages = extractPageImages(delta, frames, pageSize);
     const payload = encodePageImages(pages);
 
+    return { state, lastWalOffset, trimEnd, pageSize, frames, payload };
+  }
+
+  // Network: ship the captured delta to S3. Runs AFTER the connection has
+  // already been released back to the pool by the caller of _query -- must
+  // not touch `connection` for anything other than bookkeeping fields that
+  // don't require exclusive access (state/checkpoint-in-flight flags),
+  // since another query may already be running on it by the time this
+  // resolves.
+  async _shipCapturedDelta(connection, s3, captured) {
+    const { state, lastWalOffset, trimEnd, pageSize, frames, payload } = captured;
     const committer = createCommitter({
       manifestStore: s3.manifestStore,
       segmentStore: s3.segmentStore,
@@ -218,25 +278,29 @@ export class SqliteS3Client extends BetterSQLite3Client {
     connection.__sqliteS3State = state;
     s3.checkpointPolicy.recordSegment(payload.length);
 
-    // Checkpointing is a best-effort optimization (bounds restore time by
-    // periodically merging the growing wal-segment history into a new base
-    // segment) — never let a failure here break the caller's actual write.
-    // I1: it must also never add its own latency (a full local restore plus
-    // full reupload) directly to a caller's write, so this is a
-    // fire-and-forget kick-off, not an awaited call. `_checkpointInFlight`
-    // prevents overlapping attempts; `_nextCheckpointAttemptAt` is a
-    // separate cooldown purely to stop hammering S3 with back-to-back
-    // attempts (e.g. after an abandoned/conflicting one) -- it does NOT
-    // stand in for `checkpointPolicy.recordCheckpoint()`, which is only
-    // ever called on an actual `{checkpointed: true}` result so that an
-    // abandoned attempt correctly leaves the size/time trigger still armed.
+    this._maybeKickOffCheckpoint(s3);
+  }
+
+  // Checkpointing is a best-effort optimization (bounds restore time by
+  // periodically merging the growing wal-segment history into a new base
+  // segment) — never let a failure here break the caller's actual write.
+  // I1: it must also never add its own latency (a full local restore plus
+  // full reupload) directly to a caller's write, so this is a
+  // fire-and-forget kick-off, not an awaited call. `_checkpointInFlight`
+  // prevents overlapping attempts; `_nextCheckpointAttemptAt` is a
+  // separate cooldown purely to stop hammering S3 with back-to-back
+  // attempts (e.g. after an abandoned/conflicting one) -- it does NOT
+  // stand in for `checkpointPolicy.recordCheckpoint()`, which is only
+  // ever called on an actual `{checkpointed: true}` result so that an
+  // abandoned attempt correctly leaves the size/time trigger still armed.
+  _maybeKickOffCheckpoint(s3) {
     try {
       if (
         s3.checkpointPolicy.shouldCheckpoint() &&
         !this._checkpointInFlight &&
         // `this` here can be a constructor-less trxClient clone (see the
         // extensive comments above on acquireRawConnection/
-        // _maybeCaptureCommit) that never ran through this class's
+        // _captureAndScheduleShip) that never ran through this class's
         // constructor, so `_nextCheckpointAttemptAt` can be `undefined` on
         // it. `Date.now() >= undefined` is always false, which would
         // silently block checkpointing forever on any such clone — default
@@ -269,6 +333,11 @@ export class SqliteS3Client extends BetterSQLite3Client {
     } catch (err) {
       console.error('sqlite-s3: checkpoint attempt failed (non-fatal):', err);
     }
+  }
+
+  async destroy() {
+    await (pendingShips.get(this.connectionSettings.filename) ?? Promise.resolve()).catch(() => {});
+    return super.destroy();
   }
 
   transaction(container, config, outerTx) {
@@ -324,12 +393,19 @@ export class SqliteS3Client extends BetterSQLite3Client {
     let lastErr;
     for (let attempt = 0; attempt < MAX_RECONCILE_ATTEMPTS; attempt += 1) {
       try {
-        return await super.transaction(container, config, outerTx);
+        const result = await super.transaction(container, config, outerTx);
+        // The transaction's COMMIT goes through _query -> _captureAndScheduleShip,
+        // which now ships to S3 asynchronously (see Task 2) -- it can still be
+        // in flight when super.transaction() above resolves. A conflict
+        // discovered only once that ship settles must still trigger a retry,
+        // so wait for it here before treating this attempt as successful.
+        await (lastShips.get(this.connectionSettings.filename) ?? Promise.resolve());
+        return result;
       } catch (err) {
         if (!err.sqliteS3Conflict) throw err;
         lastErr = err;
         // The connection was marked __knex__disposed when the conflict was
-        // detected (see _maybeCaptureCommit), so the retried
+        // detected (see _shipCapturedDelta), so the retried
         // super.transaction() call below will acquire a fresh connection —
         // re-running restoreLocalDb against the now-current S3 state —
         // before re-invoking `container` against that fresh state.
