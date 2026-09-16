@@ -143,3 +143,21 @@ tested:
    rollback itself fail too. Now skips FAILED deployments.
 
 Neither bug touched the sqlite-s3 fix. Fixes committed, not yet deployed.
+
+
+## Deploy shakeout, continued (3 more bugs found via real attempts)
+
+- `verify-otc` request also needed `integrityToken` (same middleware gate
+  as `send-magic-link`) — missing it threw a generic pre-controller
+  BadRequestError.
+- `signin-redirect` check inspected the wrong response: Ghost core's
+  `createSessionFromMagicLink` sets the cookie then does a real 302
+  redirect, but `fetch`'s default `redirect:'follow'` auto-followed it, so
+  the response inspected afterward was the final page, not the redirect
+  hop carrying `Set-Cookie`. Fixed with `redirect: 'manual'`.
+
+All fixes committed with regression tests (80/80 passing). Each was found
+by an actual deploy attempt reaching further than the last — `findPreviousTag`'s
+fix is holding up (two consecutive rollbacks now correctly targeted
+`90fb07e`, the known-good sqlite fix). Prod confirmed healthy throughout:
+deployment 19 ACTIVE, 200 OK.
