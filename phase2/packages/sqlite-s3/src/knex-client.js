@@ -93,6 +93,18 @@ export class SqliteS3Client extends BetterSQLite3Client {
       pool: { ...config.pool, min: 1, max: readerPoolSize },
       connection: { filename: config.connection.filename },
     });
+    // TEMPORARY diagnostic for a prod-only "Unable to acquire a connection"
+    // crash not reproducible locally -- remove once root-caused. Confirms
+    // whether the reader pool's tarn Pool object exists at all right after
+    // construction (the only way acquireConnection's own "if (!this.pool)"
+    // guard fires is if it never got created, or got destroyed later).
+    console.error(
+      'sqlite-s3 DIAGNOSTIC: reader pool constructed, pool=%s min=%s max=%s dbPath=%s',
+      Boolean(this._readerClient.pool),
+      this._readerClient.pool?.min,
+      this._readerClient.pool?.max,
+      config.connection.filename,
+    );
   }
 
   // Bounded retry on top of the short (config-controlled) per-attempt
@@ -129,11 +141,21 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // inside a transaction must see that transaction's own uncommitted
     // writes and stay pinned to its single held connection -- a separate
     // reader-pool connection would never observe them.
-    if (
+    const routeToReader =
       !this.transacting &&
       this._writerHasAcquired &&
-      SqliteS3Client._isReadOnlyBuilder(builder)
-    ) {
+      SqliteS3Client._isReadOnlyBuilder(builder);
+    // TEMPORARY diagnostic -- remove once root-caused (see constructor).
+    if (routeToReader) {
+      console.error(
+        'sqlite-s3 DIAGNOSTIC: routing to reader, method=%s writerHasAcquired=%s readerPool=%s transacting=%s',
+        builder?._method,
+        this._writerHasAcquired,
+        Boolean(this._readerClient?.pool),
+        this.transacting,
+      );
+    }
+    if (routeToReader) {
       runner.client = this._readerClient;
     }
     return runner;
@@ -474,6 +496,8 @@ export class SqliteS3Client extends BetterSQLite3Client {
   }
 
   async destroy() {
+    // TEMPORARY diagnostic -- remove once root-caused (see constructor).
+    console.error('sqlite-s3 DIAGNOSTIC: destroy() called, dbPath=%s', this.connectionSettings.filename, new Error().stack);
     await (pendingShips.get(this.connectionSettings.filename) ?? Promise.resolve()).catch(() => {});
     await this._readerClient.destroy();
     return super.destroy();
