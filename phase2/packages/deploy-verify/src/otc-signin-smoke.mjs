@@ -105,10 +105,17 @@ export async function verifyOtcSignInSmoke(
     }
   }
 
+  // /api/verify-otc is gated by the same verifyIntegrityToken middleware as
+  // /api/send-magic-link (Ghost/ghost/core/core/server/web/members/app.js) --
+  // it reads req.body.integrityToken and throws a generic, contextless
+  // BadRequestError (default message "The request could not be understood.")
+  // before the controller ever runs if it's missing. Reuses the SAME token
+  // fetched above for send-magic-link; nothing ties an integrity token to a
+  // specific request, it's just proof the caller loaded the page.
   const verifyResponse = await fetchImpl(`${base}/blog/members/api/verify-otc/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ otc, otcRef }),
+    body: JSON.stringify({ otc, otcRef, integrityToken }),
   });
   if (!verifyResponse.ok) {
     const detail = await verifyResponse.text().catch(() => '');

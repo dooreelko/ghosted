@@ -49,6 +49,11 @@ function makeFetchImpl({ verifyOtcHandler } = {}) {
       const body = JSON.parse(options.body);
       assert.equal(body.otc, expectedOtc(), 'derived otc must match what Ghost would have generated');
       assert.equal(body.otcRef, OTC_REF);
+      // /api/verify-otc is gated by the same verifyIntegrityToken middleware
+      // as send-magic-link -- missing this throws a generic BadRequestError
+      // before the controller ever runs (the exact bug a real prod deploy
+      // hit: 2026-09-16).
+      assert.equal(body.integrityToken, 'itoken', 'verify-otc must also carry the integrity token or Ghost core rejects it before the controller runs');
       return { ok: true, status: 200, json: async () => ({ redirectUrl: 'https://x/blog/members/?token=abc&action=signin' }) };
     }
     if (url.includes('/members/?token=')) {
