@@ -33,6 +33,29 @@ function makeKnex(dbPath, s3Config) {
   });
 }
 
+// Wraps every method of an object store with an artificial delay so ships
+// (which make several store calls per commitWalDelta -- manifest read,
+// segment put, manifest write) take long enough in wall-clock time for a
+// SECOND write's capture to have a real chance to start before the first
+// write's ship has settled. createInMemoryObjectStore()'s calls all settle
+// synchronously-ish (same-tick microtasks), so consecutive AWAITED
+// statements never see an overlapping in-flight ship with it -- the race
+// window this is meant to open never opens, which is why the earlier
+// (unserialized) capture/ship bug wasn't caught by any test using the
+// plain in-memory store.
+function withLatency(store, delayMs = 15) {
+  const delay = () => new Promise((resolve) => setTimeout(resolve, delayMs));
+  const wrapped = {};
+  for (const key of Object.keys(store)) {
+    const fn = store[key];
+    wrapped[key] = async (...args) => {
+      await delay();
+      return fn.apply(store, args);
+    };
+  }
+  return wrapped;
+}
+
 test('acquireRawConnection forwards restoreLocalDb\'s stats to s3.onRestoreComplete', async () => {
   const store = createInMemoryObjectStore();
   const dbPathA = await tmpDbPath();
@@ -414,6 +437,73 @@ test('a knex.transaction() callback is safely re-invoked against fresh state aft
   }
 });
 
+// Regression coverage for a bug found in code review:
+// _reconcilingTransaction used to await a shared per-dbPath map entry
+// (`lastShips.get(dbPath)`) rather than the specific ship THIS transaction's
+// own COMMIT scheduled. A read-only reconciling transaction captures
+// nothing new (there's no WAL growth to ship), so that map entry was
+// whatever an EARLIER, unrelated write happened to leave behind -- if that
+// earlier write had conflicted, this purely read-only transaction would
+// wrongly retry up to 10 times and eventually throw a bogus conflict, even
+// though it never wrote anything and never actually raced anyone.
+test('a read-only reconciling transaction does not retry or throw because of an unrelated earlier write\'s conflict', async () => {
+  const store = createInMemoryObjectStore();
+  const s3ConfigA = makeS3Config(store);
+  const manifestStoreA = s3ConfigA.manifestStore;
+  const dbPathA = await tmpDbPath();
+  const knexA = makeKnex(dbPathA, s3ConfigA);
+  registerS3Config(s3ConfigA);
+
+  try {
+    await knexA.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+
+    // Force the NEXT manifest write to conflict, by letting a totally
+    // separate writer (knexB) land a real write first against the same key.
+    const realWriteA = manifestStoreA.write.bind(manifestStoreA);
+    let forcedConflict = false;
+    manifestStoreA.write = async (manifest, opts) => {
+      if (!forcedConflict) {
+        forcedConflict = true;
+        const dbPathB = await tmpDbPath();
+        const knexB = makeKnex(dbPathB, makeS3Config(store));
+        await knexB('widgets').insert({ name: 'from-knexB' });
+        await knexB.destroy();
+      }
+      return realWriteA(manifest, opts);
+    };
+
+    // This write's own ship will genuinely conflict and get disposed --
+    // that's expected and not what's under test. What matters is that it
+    // doesn't corrupt state for the READ-ONLY transaction that follows.
+    await knexA('widgets').insert({ name: 'from-knexA' }).catch(() => {});
+    // Give the async ship a moment to actually run and (fail to) land,
+    // leaving a rejected entry behind for this db path.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const start = Date.now();
+    const result = await knexA.transaction(
+      async (trx) => {
+        const rows = await trx('widgets').select('*');
+        return rows.length;
+      },
+      { sqliteS3Reconcile: true }
+    );
+    const elapsedMs = Date.now() - start;
+
+    assert.equal(typeof result, 'number', 'the read-only transaction must complete and return normally, not throw');
+    assert.ok(
+      elapsedMs < 2000,
+      `a read-only transaction must not pay for reconciliation retries/backoff (took ${elapsedMs}ms) — it should resolve near-instantly`
+    );
+  } finally {
+    registerS3Config(undefined);
+    await knexA.destroy();
+  }
+});
+
 // Critical fix: reconciliation retry must be opt-in, not automatic — the
 // callback-less `knex.transaction()` calling form (no `container` argument;
 // Knex passes its own internal resolver in its place) must keep working
@@ -592,9 +682,14 @@ test('the connection is released back to the pool before the S3 upload for that 
     await new Promise((resolve) => setTimeout(resolve, 20)); // let the insert's capture phase run
 
     const secondQueryStarted = Date.now();
-    const rows = await knex('widgets').select('*'); // must not queue behind the stalled ship
+    // Only the timing matters here: whether the inserted row is already
+    // visible to this SELECT depends on exactly which statement's ship got
+    // stalled first (CREATE TABLE's or the insert's) and is not what this
+    // test is proving -- asserting its contents would either be incidental
+    // or require pinning down capture/ship ordering unrelated to the point
+    // being tested (that the pool doesn't block on the in-flight upload).
+    await knex('widgets').select('*'); // must not queue behind the stalled ship
     assert.ok(Date.now() - secondQueryStarted < 500, 'second query queued behind the in-flight S3 upload');
-    assert.deepEqual(rows, []); // the stalled insert hasn't shipped/wouldn't even need to have landed to prove non-blocking
 
     releasePut();
     await insertDone;
@@ -630,11 +725,24 @@ test('acquireRawConnection waits for the previous connection\'s pending ship bef
     t.increments('id');
     t.string('name');
   });
-  const insertDone = knexA('widgets').insert({ name: 'gizmo' }); // ship stalls on manifestStore.write
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The local insert itself resolves fast, independent of the stalled ship
+  // (that's the whole point of this task) -- awaiting it here does NOT wait
+  // for manifestStore.write to unstall.
+  await knexA('widgets').insert({ name: 'gizmo' }); // ship stalls on manifestStore.write
+  await new Promise((resolve) => setTimeout(resolve, 20)); // let the insert's capture run and its ship reach the stall
+
+  // Call destroy() WHILE the ship is still stalled, and only release the
+  // stall afterward -- if destroy() did NOT wait for the pending ship (e.g.
+  // its override were missing/removed), `destroyResolved` would flip to
+  // true before releaseWrite() runs below, failing the assertion.
+  let destroyResolved = false;
+  const destroyDone = knexA.destroy().then(() => { destroyResolved = true; });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(destroyResolved, false, 'destroy() resolved before the pending ship settled -- it must wait for it');
+
   releaseWrite();
-  await insertDone;
-  await knexA.destroy(); // must wait for the pending ship internally, not leave it dangling
+  await destroyDone;
+  assert.equal(destroyResolved, true);
 
   // A fresh instance restoring from the same S3 state must see the shipped row —
   // proving destroy()/the next acquire didn't restore before the ship landed.
@@ -643,5 +751,46 @@ test('acquireRawConnection waits for the previous connection\'s pending ship bef
   const rows = await knexB('widgets').select('*');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].name, 'gizmo');
+  await knexB.destroy();
+});
+
+test('N sequential awaited inserts are all visible after a restore, even with latent S3 calls (regression: unserialized captures silently dropped writes)', async () => {
+  // Regression coverage for a data-loss bug found in code review: without
+  // serializing captures per db path, write N+1's capture could run while
+  // write N's ship was still in flight and still see the OLD
+  // state.lastWalOffset (not yet advanced by N's not-yet-resolved ship), so
+  // N+1's captured delta re-included N's already-in-flight frames. N+1's
+  // ship then conflicted (CAS overlap) against N's just-landed segment,
+  // threw retryTransaction, and the connection was disposed WITHOUT
+  // advancing state -- so the next restore silently dropped every write
+  // after the first. This needs a store with real latency to reproduce:
+  // the plain synchronous in-memory store settles every call before the
+  // next statement runs, so the race window never opens.
+  const store = withLatency(createInMemoryObjectStore());
+  const dbPathA = await tmpDbPath();
+  const knexA = makeKnex(dbPathA, makeS3Config(store));
+  await knexA.schema.createTable('widgets', (t) => {
+    t.increments('id');
+    t.string('name');
+  });
+
+  const ROWS = 5;
+  for (let i = 0; i < ROWS; i += 1) {
+    // Each insert is fully awaited -- normal, non-concurrent Ghost usage.
+    // The local insert resolves fast (independent of the previous insert's
+    // still-in-flight S3 ship, per this task's whole point), so this loop
+    // races well ahead of the latency-wrapped ship pipeline and reliably
+    // produces overlapping in-flight ships without the serialization fix.
+    await knexA('widgets').insert({ name: `gizmo-${i}` });
+  }
+  await knexA.destroy(); // must drain every in-flight ship before returning
+
+  const dbPathB = await tmpDbPath();
+  const knexB = makeKnex(dbPathB, makeS3Config(store));
+  const rows = await knexB('widgets').select('*').orderBy('id');
+  assert.equal(rows.length, ROWS, `expected all ${ROWS} sequential inserts to survive a restore, got ${rows.length}`);
+  for (let i = 0; i < ROWS; i += 1) {
+    assert.equal(rows[i].name, `gizmo-${i}`);
+  }
   await knexB.destroy();
 });
