@@ -7,6 +7,7 @@ import { parseWalHeader, parseFrames } from './wal.js';
 import { extractPageImages, encodePageImages } from './page-images.js';
 import { performCheckpoint } from './checkpoint.js';
 import { ReaderClient } from './reader-client.js';
+import { bumpRestoreGeneration } from './restore-generation.js';
 
 // Some hosts (observed with Ghost + knex-migrator) construct additional Knex
 // clients from an independently re-derived copy of the connection config
@@ -83,10 +84,10 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // pinned to max:1 -- see above). Points at the SAME on-disk file the
     // writer maintains; see reader-client.js's doc comment for why opening
     // it concurrently with the writer (including mid-restore) is safe.
-    const readerPoolSize = config.connection?.s3?.readerPoolSize ?? config.readerPoolSize ?? 4;
+    const readerPoolSize = config.connection?.s3?.readerPoolSize ?? config?.readerPoolSize ?? 4;
     this._readerClient = new ReaderClient({
       ...config,
-      pool: { min: 1, max: readerPoolSize },
+      pool: { ...config.pool, min: 1, max: readerPoolSize },
       connection: { filename: config.connection.filename },
     });
   }
@@ -135,6 +136,25 @@ export class SqliteS3Client extends BetterSQLite3Client {
     await (pendingShips.get(this.connectionSettings.filename) ?? Promise.resolve()).catch(() => {}); // errors are already logged where the ship runs; don't let them fail an unrelated new connection's acquire
     const { manifest, etag } = await this._s3.manifestStore.read();
     this._manifest = manifest;
+    // restoreLocalDb's rewrite is atomic via write-to-temp-then-rename (Task
+    // 3), which is what makes it safe for ReaderClient to open the same path
+    // concurrently in the first place -- a reader always sees either the
+    // fully-old or fully-new file, never a torn write. That guarantee is
+    // about the FILE, not about any already-open reader connection's fd: a
+    // rename swaps the directory entry to a new inode without touching
+    // whatever inode an already-open fd points at, so a reader connection
+    // opened before this rename would otherwise keep reading the old,
+    // now-unlinked inode forever. bumpRestoreGeneration below (paired with
+    // ReaderClient.validateConnection) is what forces such a connection to
+    // be destroyed and reopened against the new inode next time it's handed
+    // out of the pool -- see reader-client.js for the full mechanism.
+    //
+    // What this does NOT cover: a reader query already in flight at the
+    // exact instant this rename happens can still return pre-restore rows
+    // -- nothing here pauses or coordinates with an in-progress read on
+    // another connection. That's a narrow, accepted window (the read was
+    // already running against a valid, consistent snapshot; it just won't
+    // see this particular restore's effects), not a bug to fix here.
     const restoreStats = await restoreLocalDb({
       manifest,
       manifestStore: this._s3.manifestStore,
@@ -142,6 +162,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
       leaseStore: this._s3.leaseStore,
       dbPath: this.connectionSettings.filename,
     });
+    bumpRestoreGeneration(this.connectionSettings.filename);
     // Purely observational -- unlike every other s3 config field, this one
     // is allowed a silent no-default fallback (it cannot affect
     // correctness, only visibility), so callers that don't care about

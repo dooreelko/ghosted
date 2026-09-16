@@ -839,9 +839,110 @@ test('a write is never routed to the reader pool even while it is idle', async (
       t.string('name');
     });
     await knex('widgets').insert({ name: 'gizmo' });
+    // Warm the reader pool with an idle connection BEFORE the write this
+    // test is really about, so a pass here can't be explained by "the
+    // reader pool simply hadn't been used yet" -- it must be that the
+    // insert itself genuinely stayed on the writer despite an idle reader
+    // connection already sitting in the pool.
+    const warmup = await knex('widgets').select('*');
+    assert.equal(warmup.length, 1);
+    await knex('widgets').insert({ name: 'gadget' });
     const rows = await knex('widgets').select('*');
-    assert.equal(rows.length, 1, 'the insert must be visible to a same-process read — proving it landed on the writer, not a stale reader-pool connection opened before the insert');
+    assert.equal(rows.length, 2, 'the second insert must be visible to a same-process read — proving it landed on the writer, not on the already-warmed idle reader-pool connection');
   } finally {
     await knex.destroy();
+  }
+});
+
+// Regression for: restoreLocalDb's atomic rewrite (Task 3) is a
+// write-to-temp-then-RENAME, which swaps the directory entry to a brand-new
+// inode without touching whatever inode an already-open fd still points at.
+// A reader-pool connection opened before a restore keeps reading the OLD,
+// now-unlinked inode forever unless something forces it to reopen. This
+// matters because a writer reconnect (and therefore a fresh
+// acquireRawConnection -> restoreLocalDb) is not a rare event -- it happens
+// on every ordinary reconnect after a disposed connection, e.g. any S3 CAS
+// conflict surfaced via _shipCapturedDelta. This test forces that exact
+// disposal path directly (bypassing the need to engineer a real CAS
+// conflict) and verifies a reader-pool connection warmed BEFORE the
+// reconnect still sees data written AFTER it.
+test('a warmed reader-pool connection is invalidated by a writer reconnect/restore (regression: stale inode after rename)', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const knex = makeKnex(dbPath, { ...makeS3Config(store), readerPoolSize: 2 });
+  try {
+    await knex.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+    await knex('widgets').insert({ name: 'first' });
+
+    // Warm a reader-pool connection against the pre-reconnect inode.
+    const rowsBefore = await knex('widgets').select('*');
+    assert.equal(rowsBefore.length, 1);
+
+    // Force the writer's *next* acquire to reconnect -- and therefore
+    // re-run restoreLocalDb, rewriting the local file's inode -- via the
+    // same disposal mechanism a real S3 CAS conflict triggers.
+    const writerClient = knex.client;
+    const heldConnection = await writerClient.acquireConnection();
+    heldConnection.__knex__disposed = new Error('simulated disposal for regression test');
+    await writerClient.releaseConnection(heldConnection);
+
+    await knex('widgets').insert({ name: 'second' }); // triggers the reconnect + restore
+
+    const rowsAfter = await knex('widgets').select('*');
+    assert.equal(
+      rowsAfter.length,
+      2,
+      'a reader-pool connection warmed before the writer reconnected must not keep serving the pre-restore inode'
+    );
+  } finally {
+    await knex.destroy();
+  }
+});
+
+// Regression for the same stale-inode problem, but via the OTHER path the
+// constructor's own comments already document as real: more than one
+// independent SqliteS3Client instance pointed at the SAME db path in one
+// process (e.g. Ghost's own pool plus a separately-constructed
+// knex-migrator pool). Instance A's warmed reader pool must not be left
+// stuck on stale data after instance B (a totally separate writer) restores
+// the shared file out from under it.
+test('two independent SqliteS3Client instances on the same db path: instance A\'s warmed reader sees instance B\'s write (regression: cross-instance stale inode)', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+  const s3Config = { ...makeS3Config(store), readerPoolSize: 2 };
+
+  const knexA = makeKnex(dbPath, s3Config);
+  try {
+    await knexA.schema.createTable('widgets', (t) => {
+      t.increments('id');
+      t.string('name');
+    });
+    await knexA('widgets').insert({ name: 'from-a' });
+
+    // Warm instance A's reader pool against the current inode.
+    const rowsBeforeB = await knexA('widgets').select('*');
+    assert.equal(rowsBeforeB.length, 1);
+
+    // A second, independent SqliteS3Client instance on the SAME db path
+    // performs its own write -- its own acquireRawConnection restores the
+    // shared file (rename to a new inode) completely independently of A.
+    const knexB = makeKnex(dbPath, s3Config);
+    try {
+      await knexB('widgets').insert({ name: 'from-b' });
+    } finally {
+      await knexB.destroy();
+    }
+
+    const rowsAfterB = await knexA('widgets').select('*');
+    assert.equal(
+      rowsAfterB.length,
+      2,
+      "instance A's reader pool, warmed before instance B's write, must not keep serving the inode from before B's restore"
+    );
+  } finally {
+    await knexA.destroy();
   }
 });
