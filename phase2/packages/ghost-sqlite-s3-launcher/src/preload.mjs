@@ -127,7 +127,11 @@ config.set('database:client', SqliteS3Client);
 config.set('database:useNullAsDefault', true);
 config.set('database:connection', {
   filename: path.join(dataDir, 'ghost.db'),
-  s3: s3Config,
+  s3: {
+    ...s3Config,
+    readerPoolSize: Number(process.env.SQLITE_S3_READER_POOL_SIZE ?? 4),
+    acquireTimeoutMillis: Number(process.env.SQLITE_S3_ACQUIRE_TIMEOUT_MS ?? 5000),
+  },
 });
 console.error('[boot] database:client/useNullAsDefault/connection config set');
 

@@ -286,6 +286,29 @@ test('pool is pinned to min:1, max:1 regardless of what is passed in config.pool
   }
 });
 
+// Regression test: the writer's fail-fast acquireTimeoutMillis (sourced from
+// config.connection.s3.acquireTimeoutMillis) must also reach the reader
+// pool's own Tarn config, not just the writer's -- otherwise the
+// SQLITE_S3_ACQUIRE_TIMEOUT_MS env var wired in preload.mjs would silently
+// only ever affect the writer pool, leaving the reader pool stuck on
+// ReaderClient's own hardcoded 5000ms default regardless of what's configured.
+test('acquireTimeoutMillis configured on the writer also applies to the reader pool', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPath = await tmpDbPath();
+
+  const knex = knexFactory({
+    client: SqliteS3Client,
+    connection: { filename: dbPath, s3: { ...makeS3Config(store), acquireTimeoutMillis: 1234 } },
+    useNullAsDefault: true,
+  });
+  try {
+    assert.equal(knex.client.config.pool.acquireTimeoutMillis, 1234);
+    assert.equal(knex.client._readerClient.config.pool.acquireTimeoutMillis, 1234);
+  } finally {
+    await knex.destroy();
+  }
+});
+
 // Regression test for I4: frames a rolled-back transaction spilled into the
 // WAL before rolling back must never be shipped as a durable segment, and a
 // real committed write landing after them must never be silently dropped.

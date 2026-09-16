@@ -89,6 +89,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     const readerPoolSize = config.connection?.s3?.readerPoolSize ?? config?.readerPoolSize ?? 4;
     this._readerClient = new ReaderClient({
       ...config,
+      acquireTimeoutMillis,
       pool: { ...config.pool, min: 1, max: readerPoolSize },
       connection: { filename: config.connection.filename },
     });
