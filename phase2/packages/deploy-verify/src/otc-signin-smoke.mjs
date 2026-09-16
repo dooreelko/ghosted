@@ -50,7 +50,11 @@ export async function verifyOtcSignInSmoke(
   const sendResponse = await fetchImpl(`${base}/blog/members/api/send-magic-link/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, emailType: 'signin', integrityToken, autoRedirect: false }),
+    // includeOTC is required or Ghost core's _handleSignin never generates
+    // (or returns) an otc_ref at all -- silently, with no error, just an
+    // absent field in an otherwise-201 response (confirmed against
+    // Ghost/ghost/core/core/server/services/members/members-api/controllers/router-controller.js:1113-1128).
+    body: JSON.stringify({ email, emailType: 'signin', integrityToken, autoRedirect: false, includeOTC: true }),
   });
   if (!sendResponse.ok) {
     const detail = await sendResponse.text().catch(() => '');

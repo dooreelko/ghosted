@@ -36,6 +36,12 @@ function makeFetchImpl({ verifyOtcHandler } = {}) {
       return { ok: true, status: 200, text: async () => 'itoken' };
     }
     if (url.endsWith('/send-magic-link/')) {
+      // Ghost core only generates/returns otc_ref when the request body sets
+      // includeOTC: true -- silently omitted otherwise, no error (this is
+      // the exact bug a real prod deploy hit: 2026-09-16). Assert it's set
+      // so a regression here fails loudly instead of only in prod.
+      const body = JSON.parse(options.body);
+      assert.equal(body.includeOTC, true, 'send-magic-link must request includeOTC or Ghost core never returns otc_ref');
       return { ok: true, status: 201, json: async () => ({ otc_ref: OTC_REF }) };
     }
     if (url.endsWith('/verify-otc/')) {

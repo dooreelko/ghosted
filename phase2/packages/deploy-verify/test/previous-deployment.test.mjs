@@ -26,6 +26,31 @@ test('findPreviousTag returns null with no deployments at all', () => {
   assert.equal(findPreviousTag({ deployments: [] }), null);
 });
 
+// Regression test for a real incident (2026-09-16): rollback picked a
+// FAILED prior deployment's tag instead of skipping it to find the last
+// one that actually served traffic.
+test('findPreviousTag skips a FAILED deployment to find the last one that actually went ACTIVE', () => {
+  const response = {
+    deployments: [
+      { version: 15, state: 'ACTIVE', containers: { ghost: { image: `${repo}:currently-being-replaced` } } },
+      { version: 14, state: 'FAILED', containers: { ghost: { image: `${repo}:broken-sha` } } },
+      { version: 13, state: 'INACTIVE', containers: { ghost: { image: `${repo}:last-good-sha` } } },
+    ],
+  };
+  assert.equal(findPreviousTag(response), 'last-good-sha');
+});
+
+test('findPreviousTag returns null if every earlier deployment failed', () => {
+  const response = {
+    deployments: [
+      { version: 3, state: 'ACTIVE', containers: { ghost: { image: `${repo}:currently-being-replaced` } } },
+      { version: 2, state: 'FAILED', containers: { ghost: { image: `${repo}:broken-sha` } } },
+      { version: 1, state: 'FAILED', containers: { ghost: { image: `${repo}:also-broken-sha` } } },
+    ],
+  };
+  assert.equal(findPreviousTag(response), null);
+});
+
 test('findPreviousTag sorts by version regardless of input order', () => {
   const response = {
     deployments: [
