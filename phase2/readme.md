@@ -107,6 +107,7 @@ comparing full totals.)
 | S3 (data bucket: SQLite store + images) | ~$1-2 | Storage + requests at ~2GB content; confirmed live content is 15MB/76 files, well under this |
 | ECR (private image registry) | ~$0.10-0.20 | One image kept at a time; storage-only cost |
 | CloudWatch (3 custom metrics + 3 alarms) | ~$1.20 | 3 metrics × $0.30/mo + 3 alarms × $0.10/mo (moth `rk2qo`) |
+| CloudWatch Logs (CloudFront access logs) | ~$0.20 per 1M requests | Vended-log ingestion ~$0.50/GB at ~400 bytes/record (measured) (trimmed field set), plus ~$0.03/GB-mo storage for 90-day retention; scales with traffic. Fallback if it grows: deliver to S3 + Athena instead (moth `klcfz`) |
 | SNS (alarm email topic) | ~$0 | Well under the 1,000 free email notifications/month |
 | CloudFront (existing distribution, extended) | (pre-existing, not incremental) | Same distribution already serving Phase 1; `/blog*` and image behaviors added, no new distribution |
 | Route53 hosted zone | (pre-existing, not incremental) | Already existed before Phase 1 |
