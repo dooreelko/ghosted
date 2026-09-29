@@ -115,3 +115,12 @@ fresh sizes must be ones the active theme allows -- a size outside the
 theme's list is redirected to the original by Ghost itself and never
 generated, so it can't exercise the fallback (and fails the "landed in
 S3" check).
+
+
+----- Closeout -----
+
+Validated: launcher unit tests pass (including the serve() patch tests),
+shellcheck clean on the post-deploy check script. Deployed to prod
+(image 11e38b5) and verified post-deploy by the user. Merged to main
+(merge db70616 of branch a1jxt-image-redirect-loop). Closed by the user
+2026-09-29.
