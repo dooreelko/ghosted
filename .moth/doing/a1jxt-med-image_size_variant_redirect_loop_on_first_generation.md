@@ -106,3 +106,12 @@ original 404s; a size the theme doesn't allow still redirects to the
 original. Beyond the script: a real-browser preview of a freshly uploaded
 image, a test newsletter opened in Apple Mail/iOS, and a day of access
 logs showing no 301s on size-variant paths.
+
+
+Deployed 2026-09-29 (image tag 11e38b5, via the standard deploy
+pipeline; Lightsail deployment ACTIVE). Post-deploy verification run by
+the user and reported passing. Note for future runs of the check: the
+fresh sizes must be ones the active theme allows -- a size outside the
+theme's list is redirected to the original by Ghost itself and never
+generated, so it can't exercise the fallback (and fails the "landed in
+S3" check).
