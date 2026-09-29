@@ -19,6 +19,7 @@ import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
 import { buildMailConfig } from './mail-config.mjs';
 import { buildS3StorageConfig } from './storage-config.mjs';
 import { createMetricsPublisher } from './metrics.mjs';
+import { patchS3StorageServe } from './s3-storage-serve-patch.mjs';
 
 const ghostCheckoutDir = process.env.GHOST_CHECKOUT_DIR;
 const bucket = process.env.SQLITE_S3_BUCKET;
@@ -176,5 +177,20 @@ console.error('[boot] storage config set');
 // preload script's own boot lines. Force stdout back on.
 config.set('logging:transports', ['stdout']);
 console.error('[boot] logging:transports config set to stdout');
+
+// S3Storage.serve() 301s to its cdnUrl, which is this site's own URL, so a
+// freshly generated size variant redirect-loops at CloudFront (a1jxt) -- see
+// s3-storage-serve-patch.mjs. Ghost's adapter manager loads the class with a
+// plain require of this same path, so patching the cached module here is what
+// Ghost gets. Loaded only after all config.set calls above: the module pulls
+// in @tryghost/logging, which reads config when first required. Non-fatal:
+// without the patch the site still works, only new variants can loop again.
+try {
+  const s3StorageModule = require(path.join(ghostCoreDir, 'core/server/adapters/storage/S3Storage.js'));
+  patchS3StorageServe(s3StorageModule.default ?? s3StorageModule);
+  console.error('[boot] S3Storage.serve patched');
+} catch (err) {
+  console.error('[boot] could not patch S3Storage.serve (non-fatal):', err.message);
+}
 
 console.error('[boot] preload.mjs complete, handing off to index.js');
