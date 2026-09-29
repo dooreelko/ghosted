@@ -9,8 +9,10 @@ branch of the Ghost fork), not just this monorepo's bind-mounted smoke
 layout.
 
 Ghost's own source tree is never modified. This package only patches
-in-memory state (`@tryghost/database-info`'s SQLite detection) and
-Ghost's config object, before `ghost/core/index.js` boots.
+in-memory state (`@tryghost/database-info`'s SQLite detection, and
+`S3Storage.serve()` so a new image size variant redirects to its original
+instead of looping on itself) and Ghost's config object, before
+`ghost/core/index.js` boots.
 
 ## Usage
 
