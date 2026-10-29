@@ -424,9 +424,31 @@ per-function subset boot therefore means a custom entry file that requires
 Ghost's modules and initializes only what the group needs, outside Ghost's
 source, as the Phase 2 launcher does.
 
-Next in the spike: record the loaded-file list for a members-session-only
-boot and a render-only boot, compare sizes, and take a real cold-start
-measurement after the first deploy.
+Subset boots (same image and method; harness in `phase3/spike/`, run against
+the installed tree outside Ghost's source, mirroring the boot order):
+
+| Boot | Ready after | JavaScript loaded | Works |
+|---|---|---|---|
+| Full Ghost (reference) | ~0.86 s | 23.5 MB, ~3,480 files, ~400 packages | yes |
+| Core only (database, settings, models, i18n) | ~0.4 s | 12.7 MB, ~1,650 files, ~220 packages | n/a |
+| Members group (core + member services, members app) | ~0.62 s | 20.4 MB, ~2,870 files, ~360 packages after serving requests | site info, member and session checks, comment counts all answered correctly |
+| Render group (core + frontend services, member services, frontend app) | ~0.80 s | 22.8 MB, ~3,450 files, ~400 packages | home page, feed, sitemap and a 404 rendered correctly |
+
+Reading:
+- A subset boot of Ghost works with a short entry file outside Ghost's
+  source, for both the members and the render groups.
+- Subsetting barely shrinks anything: the shared core is already 12.7 MB and
+  the group-specific part adds 8-10 MB, so every Ghost-backed function lands
+  at 20-25 MB of loaded JavaScript, 13% below the full boot for the members
+  group and about the same for render. Boot time falls only about 25% for the
+  members group. So per-function trimming of the Ghost-backed functions buys
+  little; what differs per function is the entry file (what is initialized),
+  the memory size and the route set.
+- The functions that do not need Ghost's models (checkpoint, the
+  link redirect if it only reads one table, the image resizer) can be far
+  smaller as plain handlers.
+- A cold start is the boot time plus the store restore from S3, at Lambda's
+  CPU; measured after the first deploy as decided.
 
 ## Decided after the spike
 
