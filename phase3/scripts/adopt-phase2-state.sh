@@ -12,10 +12,6 @@
 # Usage: phase3/scripts/adopt-phase2-state.sh
 set -euo pipefail
 
-if ! command -v tofu >/dev/null || ! command -v jq >/dev/null; then
-  exec nix-shell -p opentofu jq --run "$0"
-fi
-
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
