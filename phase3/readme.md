@@ -395,6 +395,39 @@ placeholder replaced by the deploy script, and changes to it are ignored.
   a not-found function (extra route and function for the same result), and the
   raw storage error page (unfriendly).
 
+## Spike: how big is Ghost per function (2026-10-29, first results)
+
+Method: the Phase 2 production image (pulled read-only from the registry), run
+locally with a plain SQLite file and no AWS. Numbers are from one machine and
+an empty database; treat them as orders of magnitude.
+
+| Measurement | Result |
+|---|---|
+| Installed tree in the image | ~496 MB: dependencies ~299 MB, Ghost core ~99 MB (of which the built admin client ~86 MB, static, served from S3), the Phase 2 launcher packages ~92 MB |
+| Installed tree vs the zip limits | Core plus dependencies (~400 MB) is over the 250 MB unzipped limit for zip packages, so the full tree cannot ship as is |
+| JavaScript actually loaded by a full boot | ~23.5 MB in ~3,500 files from ~400 packages (the largest: Ghost core 3.8 MB, the SQLite driver 2.1 MB) |
+| Full boot, warm local database | ~0.9 s wall (Ghost reports 0.86 s), first boot with migrations ~3 s |
+
+Reading: the weight in the image is mostly files that are never loaded, so a
+traced per-function bundle can be tens of MB, well inside the zip limits, and
+a container image per function would not be needed. Not yet shown: the
+loaded-file list covers only code required at boot (routes load more lazily),
+non-JavaScript files the code reads (templates, locale files, native
+binaries, the image library for resize) are not in the number, and Lambda
+CPU is slower than this machine (a small function gets a fraction of a core),
+so cold starts will be a multiple of 0.9 s plus the store restore from S3.
+
+Boot structure: Ghost's boot is one fixed sequence. It has switches for the
+backend, frontend and server, but initializes core and all services whatever
+they are (members, email, stripe, jobs, mentions and about 40 more). A
+per-function subset boot therefore means a custom entry file that requires
+Ghost's modules and initializes only what the group needs, outside Ghost's
+source, as the Phase 2 launcher does.
+
+Next in the spike: record the loaded-file list for a members-session-only
+boot and a render-only boot, compare sizes, and take a real cold-start
+measurement after the first deploy.
+
 ## Decided after the spike
 
 - **Classic Lambda for all functions** (including members-session, comments, admin: Express inside the function, behind one API Gateway HTTP API). Web functions are not used.
