@@ -447,6 +447,12 @@ Reading:
 - The functions that do not need Ghost's models (checkpoint, the
   link redirect if it only reads one table, the image resizer) can be far
   smaller as plain handlers.
+- Memory (resident set, same runs): a bare Node process 45 MB; core only
+  167 MB; members group 222 MB; render group 254 MB; full boot 243 MB. The
+  models and settings that every Ghost-backed function loads cost ~120 MB
+  over bare Node, so ~256 MB is the floor and 512 MB the practical minimum for
+  members-type functions, with render and anything using the image library
+  higher. Capping the heap trims only a few percent.
 - A cold start is the boot time plus the store restore from S3, at Lambda's
   CPU; measured after the first deploy as decided.
 

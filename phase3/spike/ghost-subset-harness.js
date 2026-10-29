@@ -11,6 +11,7 @@ function report(label) {
   let total = 0;
   for (const f of files) { try { total += fs.statSync(f).size; } catch {} }
   const pk = new Set(files.map((f) => (f.match(/\.pnpm\/[^/]+\/node_modules\/((?:@[^/]+\/)?[^/]+)/) || [])[1]).filter(Boolean));
+  const m = process.memoryUsage(); console.log(`MEM ${label}: rss=${(m.rss/1e6).toFixed(0)}MB heapUsed=${(m.heapUsed/1e6).toFixed(0)}MB external=${(m.external/1e6).toFixed(0)}MB`);
   console.log(`LOADED ${label}: files=${files.length} js=${(total / 1e6).toFixed(1)}MB packages=${pk.size}`);
 }
 
