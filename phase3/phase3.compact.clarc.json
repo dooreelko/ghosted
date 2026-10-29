@@ -1,0 +1,272 @@
+{
+  "title": "Phase 3: serverless Ghost (compact, per function group)",
+  "description": "Same system as phase3, one node per function group: reader-facing (6), render (2), admin (4), background (4). The API also routes the preview function in the render group (edge left out to keep the layout readable)",
+  "nodes": [
+    {
+      "id": "viewer",
+      "label": "Viewer / admin (browser)",
+      "service": "client"
+    },
+    {
+      "id": "cdn",
+      "label": "CloudFront (path behaviors, index function, 404 page)",
+      "service": "cloudfront"
+    },
+    {
+      "id": "content",
+      "label": "Content bucket (HTML, images)",
+      "service": "s3"
+    },
+    {
+      "id": "apigw",
+      "label": "API Gateway HTTP API (routes, throttling)",
+      "service": "api_gateway"
+    },
+    {
+      "id": "readers",
+      "label": "Reader-facing functions: image-resize, link-redirect, members-session, comments, webmentions, content-api",
+      "service": "lambda"
+    },
+    {
+      "id": "admin",
+      "label": "Admin functions: admin-content, admin-audience, admin-site, admin-heavy",
+      "service": "lambda"
+    },
+    {
+      "id": "gen",
+      "label": "Render functions: generator, preview",
+      "service": "lambda"
+    },
+    {
+      "id": "bg",
+      "label": "Background functions: scheduled-publish, email-send, maintenance, sqlite-checkpoint",
+      "service": "lambda"
+    },
+    {
+      "id": "events",
+      "label": "EventBridge Scheduler (recurring + one-shot)",
+      "service": "eventbridge"
+    },
+    {
+      "id": "data",
+      "label": "SQLite store bucket",
+      "service": "s3"
+    },
+    {
+      "id": "smtp",
+      "label": "SMTP provider",
+      "service": "traditional_server"
+    },
+    {
+      "id": "ssm",
+      "label": "Parameter Store (secrets)",
+      "service": "parameter_store"
+    },
+    {
+      "id": "cw",
+      "label": "CloudWatch (access logs, alarms)",
+      "service": "cloudwatch_2"
+    },
+    {
+      "id": "queue",
+      "label": "Generate queue (+ dead-letter)",
+      "service": "sqs"
+    },
+    {
+      "id": "dlq",
+      "label": "Dead-letter queue",
+      "service": "sqs"
+    },
+    {
+      "id": "sns",
+      "label": "Alarm topic (email)",
+      "service": "sns"
+    }
+  ],
+  "edges": [
+    {
+      "from": "viewer",
+      "to": "cdn",
+      "label": "HTTPS"
+    },
+    {
+      "from": "cdn",
+      "to": "content",
+      "label": "default: static pages, images"
+    },
+    {
+      "from": "cdn",
+      "to": "apigw",
+      "label": "dynamic paths"
+    },
+    {
+      "from": "readers",
+      "to": "content",
+      "label": "image variants (resize)"
+    },
+    {
+      "from": "admin",
+      "to": "content",
+      "label": "heavy: uploads, imports"
+    },
+    {
+      "from": "admin",
+      "to": "queue",
+      "label": "site changed"
+    },
+    {
+      "from": "admin",
+      "to": "bg",
+      "label": "newsletter send"
+    },
+    {
+      "from": "gen",
+      "to": "content",
+      "label": "write HTML"
+    },
+    {
+      "from": "events",
+      "to": "bg",
+      "label": "recurring"
+    },
+    {
+      "from": "bg",
+      "to": "queue",
+      "label": "scheduled publish"
+    },
+    {
+      "from": "bg",
+      "to": "smtp",
+      "label": "SMTP"
+    },
+    {
+      "from": "readers",
+      "to": "data",
+      "label": "rw / ro"
+    },
+    {
+      "from": "admin",
+      "to": "data",
+      "label": "rw"
+    },
+    {
+      "from": "bg",
+      "to": "data",
+      "label": "rw"
+    },
+    {
+      "from": "gen",
+      "to": "data",
+      "label": "ro"
+    },
+    {
+      "from": "bg",
+      "to": "ssm",
+      "label": "SMTP credential",
+      "kind": "nf"
+    },
+    {
+      "from": "cdn",
+      "to": "cw",
+      "label": "access logs",
+      "kind": "nf"
+    },
+    {
+      "from": "bg",
+      "to": "cw",
+      "label": "metrics",
+      "kind": "nf"
+    },
+    {
+      "from": "apigw",
+      "to": "admin",
+      "label": "admin routes"
+    },
+    {
+      "from": "apigw",
+      "to": "readers",
+      "label": "reader routes"
+    },
+    {
+      "from": "queue",
+      "to": "gen",
+      "label": "trigger"
+    },
+    {
+      "from": "bg",
+      "to": "content",
+      "label": "ro (email preflight)"
+    },
+    {
+      "from": "admin",
+      "to": "events",
+      "label": "create one-shot"
+    },
+    {
+      "from": "queue",
+      "to": "dlq",
+      "label": "after 3 tries"
+    },
+    {
+      "from": "dlq",
+      "to": "cw",
+      "kind": "nf"
+    },
+    {
+      "from": "gen",
+      "to": "cw",
+      "kind": "nf"
+    },
+    {
+      "from": "apigw",
+      "to": "cw",
+      "kind": "nf"
+    },
+    {
+      "from": "cw",
+      "to": "sns",
+      "label": "notify",
+      "kind": "nf"
+    }
+  ],
+  "hints": {
+    "viewer": {
+      "start": true
+    },
+    "content": {
+      "rightOf": "cdn",
+      "sameCol": "data"
+    },
+    "readers": {
+      "rightOf": "cdn"
+    },
+    "admin": {
+      "below": "readers"
+    },
+    "data": {
+      "rightOf": "gen",
+      "below": "content"
+    },
+    "bg": {
+      "below": "admin"
+    },
+    "gen": {
+      "sameRow": "bg",
+      "rightOf": "bg",
+      "above": "smtp"
+    },
+    "smtp": {
+      "below": "gen",
+      "sameCol": "gen"
+    },
+    "apigw": {
+      "leftOf": "admin",
+      "sameRow": "admin"
+    },
+    "queue": {
+      "leftOf": "gen",
+      "sameRow": "gen"
+    }
+  },
+  "joinPorts": "all"
+}
