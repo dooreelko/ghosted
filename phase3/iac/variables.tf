@@ -66,6 +66,6 @@ variable "deploy_cloudfront" {
 
 variable "deploy_storage" {
   type        = bool
-  description = "Phase 3 storage stage: create the content bucket and the store bucket. Off by default so a plan on the adopted Phase 2 state stays empty; turn on as the first Phase 3 change."
-  default     = false
+  description = "Phase 3 storage stage: create the content bucket and the store bucket. Was off while the adopted Phase 2 state was checked for an empty plan (it was); now the first Phase 3 change. Defaults on so every routine apply keeps matching live state once the buckets exist."
+  default     = true
 }
