@@ -1,0 +1,216 @@
+{
+  "title": "Phase 3: serverless Ghost",
+  "description": "Static public site in S3 behind CloudFront; path-routed classic Lambda function URLs (Express inside) for dynamic, admin and background work",
+  "nodes": [
+    {
+      "id": "viewer",
+      "label": "Viewer / admin (browser)",
+      "service": "client"
+    },
+    {
+      "id": "stripe",
+      "label": "Stripe",
+      "service": "traditional_server"
+    },
+    {
+      "id": "dns",
+      "label": "DNS zone",
+      "service": "route_53"
+    },
+    {
+      "id": "cdn",
+      "label": "CloudFront (path behaviors)",
+      "service": "cloudfront"
+    },
+    {
+      "id": "content",
+      "label": "Content bucket (HTML, images)",
+      "service": "s3"
+    },
+    {
+      "id": "readers",
+      "label": "Reader-facing functions: image-resize, link-redirect, members-session, comments, billing, stripe-webhook, webmentions",
+      "service": "lambda"
+    },
+    {
+      "id": "admin",
+      "label": "Admin functions: content, audience, site, heavy",
+      "service": "lambda"
+    },
+    {
+      "id": "gen",
+      "label": "generator (render + image variant preflight)",
+      "service": "lambda"
+    },
+    {
+      "id": "bg",
+      "label": "Background functions: scheduled-publish, email-send, maintenance, checkpoint",
+      "service": "lambda"
+    },
+    {
+      "id": "events",
+      "label": "EventBridge schedules",
+      "service": "eventbridge"
+    },
+    {
+      "id": "data",
+      "label": "SQLite store bucket",
+      "service": "s3"
+    },
+    {
+      "id": "smtp",
+      "label": "SMTP provider",
+      "service": "traditional_server"
+    },
+    {
+      "id": "ssm",
+      "label": "Parameter Store (secrets)",
+      "service": "parameter_store"
+    },
+    {
+      "id": "cw",
+      "label": "CloudWatch",
+      "service": "cloudwatch_2"
+    }
+  ],
+  "edges": [
+    {
+      "from": "viewer",
+      "to": "cdn",
+      "label": "HTTPS"
+    },
+    {
+      "from": "stripe",
+      "to": "cdn",
+      "label": "webhook"
+    },
+    {
+      "from": "dns",
+      "to": "cdn",
+      "label": "DNS",
+      "kind": "nf"
+    },
+    {
+      "from": "cdn",
+      "to": "content",
+      "label": "default: static pages, images"
+    },
+    {
+      "from": "cdn",
+      "to": "readers",
+      "label": "path behaviors (function URL + OAC)"
+    },
+    {
+      "from": "cdn",
+      "to": "admin",
+      "label": "/ghost/api/admin/* behaviors"
+    },
+    {
+      "from": "readers",
+      "to": "content",
+      "label": "write image variants"
+    },
+    {
+      "from": "admin",
+      "to": "content",
+      "label": "presigned uploads"
+    },
+    {
+      "from": "admin",
+      "to": "gen",
+      "label": "site changed"
+    },
+    {
+      "from": "admin",
+      "to": "bg",
+      "label": "newsletter send"
+    },
+    {
+      "from": "gen",
+      "to": "content",
+      "label": "write HTML"
+    },
+    {
+      "from": "events",
+      "to": "bg",
+      "label": "one-shot + recurring"
+    },
+    {
+      "from": "bg",
+      "to": "gen",
+      "label": "scheduled publish"
+    },
+    {
+      "from": "bg",
+      "to": "smtp",
+      "label": "SMTP"
+    },
+    {
+      "from": "readers",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "admin",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "bg",
+      "to": "data",
+      "label": "read/write, compact"
+    },
+    {
+      "from": "gen",
+      "to": "data",
+      "label": "read snapshot"
+    },
+    {
+      "from": "readers",
+      "to": "ssm",
+      "label": "Stripe key",
+      "kind": "nf"
+    },
+    {
+      "from": "bg",
+      "to": "ssm",
+      "label": "SMTP credential",
+      "kind": "nf"
+    },
+    {
+      "from": "cdn",
+      "to": "cw",
+      "label": "access logs",
+      "kind": "nf"
+    },
+    {
+      "from": "bg",
+      "to": "cw",
+      "label": "metrics",
+      "kind": "nf"
+    }
+  ],
+  "hints": {
+    "viewer": {
+      "start": true
+    },
+    "stripe": {
+      "below": "viewer"
+    },
+    "dns": {
+      "below": "cdn"
+    },
+    "content": {
+      "rightOf": "cdn"
+    },
+    "readers": {
+      "rightOf": "cdn"
+    },
+    "admin": {
+      "below": "readers"
+    },
+    "data": {
+      "rightOf": "admin"
+    }
+  }
+}

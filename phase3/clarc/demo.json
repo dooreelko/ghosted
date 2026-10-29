@@ -1,0 +1,488 @@
+{
+  "title": "clarc demo: Phase 3 architecture diagram, built by conversation",
+  "description": "Each step: what the user asked, the clarc skill arguments, the hint set in effect, the assistant's reply, and the recreated image. Rendered with the current clarc binary; steps 03 and 04 are no-ops (flagged skip) kept for fidelity to the session.",
+  "tools": {
+    "clarc": "clarc --file <graph> > <drawio>",
+    "png": "drawio -x -f png -s <scale> -o <png> <drawio> --no-sandbox"
+  },
+  "steps": [
+    {
+      "index": 0,
+      "id": "00-first-render",
+      "actor": "user",
+      "user_request": "render the recommended approach as /clarc:clarc",
+      "skill_args": "Render the recommended Phase 3 approach from phase3/readme.md and moth nx54g: CloudFront with path-based behaviors, each behavior's origin a classic Lambda function URL (origin access control) with Express inside each function; static HTML + images in S3 as default origin; generator Lambda (triggered on publish) writes HTML to S3 and runs image-variant preflight; reader-facing functions (image-resize, link-redirect, members-session, comments, billing, stripe-webhook, webmentions); admin functions (admin-content, admin-audience, admin-site, admin-heavy with presigned S3 uploads); background functions (scheduled-publish, email-send, maintenance, checkpoint) via EventBridge; sqlite-s3 data bucket, SSM, CloudWatch. Put output under phase3/.",
+      "commands": [
+        "clarc --file steps/00-first-render/graph.clarc.json > steps/00-first-render/graph.drawio",
+        "drawio -x -f png -s 0.5 -o steps/00-first-render/graph.png steps/00-first-render/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/00-first-render/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "dns": {
+          "below": "cdn"
+        },
+        "stripe": {
+          "below": "viewer"
+        }
+      },
+      "assistant_response": "First render: 43 edges, over 100 crossings, and the PNG was clipped by drawio's tile memory limit. Unreadable. Collapsing function families into single nodes next.",
+      "note": "Original PNG was rendered at scale 2 and came out clipped; the recreated image uses scale 0.5.",
+      "skip_in_animation": false,
+      "scale": 0.5,
+      "drawio": "steps/00-first-render/graph.drawio",
+      "image": "steps/00-first-render/graph.png",
+      "crossings": 103,
+      "warnings": []
+    },
+    {
+      "index": 1,
+      "id": "01-collapsed",
+      "actor": "assistant",
+      "user_request": null,
+      "skill_args": "(assistant-initiated simplification, no user request)",
+      "commands": [
+        "clarc --file steps/01-collapsed/graph.clarc.json > steps/01-collapsed/graph.drawio",
+        "drawio -x -f png -s 1 -o steps/01-collapsed/graph.png steps/01-collapsed/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/01-collapsed/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "stripe": {
+          "below": "viewer"
+        },
+        "dns": {
+          "below": "cdn"
+        },
+        "content": {
+          "rightOf": "cdn"
+        },
+        "readers": {
+          "rightOf": "cdn"
+        },
+        "admin": {
+          "below": "readers"
+        },
+        "data": {
+          "rightOf": "admin"
+        }
+      },
+      "assistant_response": "Simplified version is readable: 14 nodes, one warning (the Stripe placement hint was not honoured). Each function family is one node; per-function detail stays in phase3/readme.md.",
+      "note": null,
+      "skip_in_animation": false,
+      "scale": 1,
+      "drawio": "steps/01-collapsed/graph.drawio",
+      "image": "steps/01-collapsed/graph.png",
+      "crossings": 12,
+      "warnings": [
+        "warning: placement hint not satisfied: stripe Below viewer"
+      ]
+    },
+    {
+      "index": 2,
+      "id": "02-dns-above-eventbridge-bg-below-admin",
+      "actor": "user",
+      "user_request": "move R53 above event bridge and bg functions below admin ones",
+      "skill_args": "move R53 above event bridge and bg functions below admin ones",
+      "commands": [
+        "clarc --file steps/02-dns-above-eventbridge-bg-below-admin/graph.clarc.json > steps/02-dns-above-eventbridge-bg-below-admin/graph.drawio",
+        "drawio -x -f png -s 1 -o steps/02-dns-above-eventbridge-bg-below-admin/graph.png steps/02-dns-above-eventbridge-bg-below-admin/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/02-dns-above-eventbridge-bg-below-admin/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "stripe": {
+          "below": "viewer"
+        },
+        "dns": {
+          "above": "events"
+        },
+        "content": {
+          "rightOf": "cdn"
+        },
+        "readers": {
+          "rightOf": "cdn"
+        },
+        "admin": {
+          "below": "readers"
+        },
+        "data": {
+          "rightOf": "admin"
+        },
+        "bg": {
+          "below": "admin"
+        }
+      },
+      "assistant_response": "Both moves landed: DNS zone above EventBridge, background functions below admin. The `dns below cdn` hint was replaced, so the Stripe placement warning remained. The layout became taller.",
+      "note": null,
+      "skip_in_animation": false,
+      "scale": 1,
+      "drawio": "steps/02-dns-above-eventbridge-bg-below-admin/graph.drawio",
+      "image": "steps/02-dns-above-eventbridge-bg-below-admin/graph.png",
+      "crossings": 5,
+      "warnings": [
+        "warning: placement hint not satisfied: stripe Below viewer"
+      ]
+    },
+    {
+      "index": 3,
+      "id": "03-rerender",
+      "actor": "user",
+      "user_request": "rerender",
+      "skill_args": "rerender",
+      "commands": [
+        "clarc --file steps/03-rerender/graph.clarc.json > steps/03-rerender/graph.drawio",
+        "drawio -x -f png -s 1 -o steps/03-rerender/graph.png steps/03-rerender/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/03-rerender/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "stripe": {
+          "below": "viewer"
+        },
+        "dns": {
+          "above": "events"
+        },
+        "content": {
+          "rightOf": "cdn"
+        },
+        "readers": {
+          "rightOf": "cdn"
+        },
+        "admin": {
+          "below": "readers"
+        },
+        "data": {
+          "rightOf": "admin"
+        },
+        "bg": {
+          "below": "admin"
+        }
+      },
+      "assistant_response": "Re-rendered from the same JSON; identical output because hints and binary were unchanged.",
+      "note": "No-op step; image identical to step 02.",
+      "skip_in_animation": true,
+      "scale": 1,
+      "drawio": "steps/03-rerender/graph.drawio",
+      "image": "steps/03-rerender/graph.png",
+      "crossings": 5,
+      "warnings": [
+        "warning: placement hint not satisfied: stripe Below viewer"
+      ]
+    },
+    {
+      "index": 4,
+      "id": "04-binary-update-no-change",
+      "actor": "user",
+      "user_request": "regenerate and rerender the clarc binary was updated",
+      "skill_args": "regenerate and rerender the clarc binary was updated",
+      "commands": [
+        "clarc --file steps/04-binary-update-no-change/graph.clarc.json > steps/04-binary-update-no-change/graph.drawio",
+        "drawio -x -f png -s 1 -o steps/04-binary-update-no-change/graph.png steps/04-binary-update-no-change/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/04-binary-update-no-change/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "stripe": {
+          "below": "viewer"
+        },
+        "dns": {
+          "above": "events"
+        },
+        "content": {
+          "rightOf": "cdn"
+        },
+        "readers": {
+          "rightOf": "cdn"
+        },
+        "admin": {
+          "below": "readers"
+        },
+        "data": {
+          "rightOf": "admin"
+        },
+        "bg": {
+          "below": "admin"
+        }
+      },
+      "assistant_response": "Render looked unchanged: the cached binary at ~/.local/share/clarc/clarc was the same build (ensure-clarc.sh does not re-download). Asked where the updated binary lived.",
+      "note": "No-op step; image identical to step 02.",
+      "skip_in_animation": true,
+      "scale": 1,
+      "drawio": "steps/04-binary-update-no-change/graph.drawio",
+      "image": "steps/04-binary-update-no-change/graph.png",
+      "crossings": 5,
+      "warnings": [
+        "warning: placement hint not satisfied: stripe Below viewer"
+      ]
+    },
+    {
+      "index": 5,
+      "id": "05-binary-updated",
+      "actor": "user",
+      "user_request": "regenerate and rerender the clarc binary was updated",
+      "skill_args": "regenerate and rerender the clarc binary was updated",
+      "commands": [
+        "clarc --file steps/05-binary-updated/graph.clarc.json > steps/05-binary-updated/graph.drawio",
+        "drawio -x -f png -s 1 -o steps/05-binary-updated/graph.png steps/05-binary-updated/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/05-binary-updated/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "stripe": {
+          "below": "viewer"
+        },
+        "dns": {
+          "above": "events"
+        },
+        "content": {
+          "rightOf": "cdn"
+        },
+        "readers": {
+          "rightOf": "cdn"
+        },
+        "admin": {
+          "below": "readers"
+        },
+        "data": {
+          "rightOf": "admin"
+        },
+        "bg": {
+          "below": "admin"
+        }
+      },
+      "assistant_response": "Binary changed this time (new mtime and size) and output differed: larger icons, similar routing, 5 crossings, Stripe warning remained.",
+      "note": "Rendered here with the current binary; steps 02-05 therefore look the same in the recreated set.",
+      "skip_in_animation": false,
+      "scale": 1,
+      "drawio": "steps/05-binary-updated/graph.drawio",
+      "image": "steps/05-binary-updated/graph.png",
+      "crossings": 5,
+      "warnings": [
+        "warning: placement hint not satisfied: stripe Below viewer"
+      ]
+    },
+    {
+      "index": 6,
+      "id": "06-swap-generator-and-smtp",
+      "actor": "user",
+      "user_request": "swap generator and smtp. is stripe explicit in the architecture?",
+      "skill_args": "swap generator and smtp (hints: gen sameRow+rightOf bg; smtp below gen)",
+      "commands": [
+        "clarc --file steps/06-swap-generator-and-smtp/graph.clarc.json > steps/06-swap-generator-and-smtp/graph.drawio",
+        "drawio -x -f png -s 1 -o steps/06-swap-generator-and-smtp/graph.png steps/06-swap-generator-and-smtp/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/06-swap-generator-and-smtp/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "stripe": {
+          "below": "viewer"
+        },
+        "dns": {
+          "above": "events"
+        },
+        "content": {
+          "rightOf": "cdn"
+        },
+        "readers": {
+          "rightOf": "cdn"
+        },
+        "admin": {
+          "below": "readers"
+        },
+        "data": {
+          "rightOf": "admin"
+        },
+        "bg": {
+          "below": "admin"
+        },
+        "gen": {
+          "sameRow": "bg",
+          "rightOf": "bg"
+        },
+        "smtp": {
+          "below": "gen"
+        }
+      },
+      "assistant_response": "Swap done: generator right of the background functions, SMTP below it; 7 crossings. Stripe is not explicit in any existing doc (only implied by 'keep paid subscriptions'); the live blog may never have had it connected.",
+      "note": null,
+      "skip_in_animation": false,
+      "scale": 1,
+      "drawio": "steps/06-swap-generator-and-smtp/graph.drawio",
+      "image": "steps/06-swap-generator-and-smtp/graph.png",
+      "crossings": 7,
+      "warnings": [
+        "warning: placement hint not satisfied: stripe Below viewer"
+      ]
+    },
+    {
+      "index": 7,
+      "id": "07-drop-stripe",
+      "actor": "user",
+      "user_request": "drop the stripe from the diagram (there's no plan for paid tier)",
+      "skill_args": "drop the stripe from the diagram",
+      "commands": [
+        "clarc --file steps/07-drop-stripe/graph.clarc.json > steps/07-drop-stripe/graph.drawio",
+        "drawio -x -f png -s 1 -o steps/07-drop-stripe/graph.png steps/07-drop-stripe/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/07-drop-stripe/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "dns": {
+          "above": "events"
+        },
+        "content": {
+          "rightOf": "cdn"
+        },
+        "readers": {
+          "rightOf": "cdn"
+        },
+        "admin": {
+          "below": "readers"
+        },
+        "data": {
+          "rightOf": "admin"
+        },
+        "bg": {
+          "below": "admin"
+        },
+        "gen": {
+          "sameRow": "bg",
+          "rightOf": "bg"
+        },
+        "smtp": {
+          "below": "gen"
+        }
+      },
+      "assistant_response": "Stripe removed with its webhook and Stripe-key edges; reader-facing box now lists five functions. 3 crossings, no warnings. phase3/readme.md and moth nx54g still described a paid tier at this point.",
+      "note": null,
+      "skip_in_animation": false,
+      "scale": 1,
+      "drawio": "steps/07-drop-stripe/graph.drawio",
+      "image": "steps/07-drop-stripe/graph.png",
+      "crossings": 3,
+      "warnings": []
+    },
+    {
+      "index": 8,
+      "id": "08-generator-above-smtp",
+      "actor": "user",
+      "user_request": "move generator one step left so it's above smtp",
+      "skill_args": "move generator one step left so it's above smtp (hints: gen above smtp; smtp below+sameCol gen)",
+      "commands": [
+        "clarc --file steps/08-generator-above-smtp/graph.clarc.json > steps/08-generator-above-smtp/graph.drawio",
+        "drawio -x -f png -s 1 -o steps/08-generator-above-smtp/graph.png steps/08-generator-above-smtp/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/08-generator-above-smtp/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "dns": {
+          "above": "events"
+        },
+        "content": {
+          "rightOf": "cdn"
+        },
+        "readers": {
+          "rightOf": "cdn"
+        },
+        "admin": {
+          "below": "readers"
+        },
+        "data": {
+          "rightOf": "admin"
+        },
+        "bg": {
+          "below": "admin"
+        },
+        "gen": {
+          "sameRow": "bg",
+          "rightOf": "bg",
+          "above": "smtp"
+        },
+        "smtp": {
+          "below": "gen",
+          "sameCol": "gen"
+        }
+      },
+      "assistant_response": "Generator directly above SMTP in the same column; 4 crossings. Side effect: the SQLite bucket moved one column left, out of the Content bucket's column.",
+      "note": null,
+      "skip_in_animation": false,
+      "scale": 1,
+      "drawio": "steps/08-generator-above-smtp/graph.drawio",
+      "image": "steps/08-generator-above-smtp/graph.png",
+      "crossings": 4,
+      "warnings": []
+    },
+    {
+      "index": 9,
+      "id": "09-sqlite-right-of-generator",
+      "actor": "user",
+      "user_request": "keep generator but move SQLite one step to the right so that it's on the right of the generator and below the content bucket",
+      "skill_args": "keep generator, move SQLite right of generator and below the content bucket (hints: data rightOf gen, below content)",
+      "commands": [
+        "clarc --file steps/09-sqlite-right-of-generator/graph.clarc.json > steps/09-sqlite-right-of-generator/graph.drawio",
+        "drawio -x -f png -s 1 -o steps/09-sqlite-right-of-generator/graph.png steps/09-sqlite-right-of-generator/graph.drawio --no-sandbox"
+      ],
+      "graph": "steps/09-sqlite-right-of-generator/graph.clarc.json",
+      "hints": {
+        "viewer": {
+          "start": true
+        },
+        "dns": {
+          "above": "events"
+        },
+        "content": {
+          "rightOf": "cdn"
+        },
+        "readers": {
+          "rightOf": "cdn"
+        },
+        "admin": {
+          "below": "readers"
+        },
+        "data": {
+          "rightOf": "gen",
+          "below": "content"
+        },
+        "bg": {
+          "below": "admin"
+        },
+        "gen": {
+          "sameRow": "bg",
+          "rightOf": "bg",
+          "above": "smtp"
+        },
+        "smtp": {
+          "below": "gen",
+          "sameCol": "gen"
+        }
+      },
+      "assistant_response": "SQLite bucket right of the generator and below the Content bucket, generator unchanged and above SMTP. No warnings, 6 crossings.",
+      "note": null,
+      "skip_in_animation": false,
+      "scale": 1,
+      "drawio": "steps/09-sqlite-right-of-generator/graph.drawio",
+      "image": "steps/09-sqlite-right-of-generator/graph.png",
+      "crossings": 6,
+      "warnings": []
+    }
+  ]
+}
