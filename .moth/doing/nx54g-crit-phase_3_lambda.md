@@ -339,3 +339,10 @@ overrides at the CDN.**
   existing container flag turned off and on. Rejected: a skeleton with only new
   resources plus importing the distribution and the rest piecemeal (more
   surgery, and it would plan to recreate everything that already exists).
+
+
+- Infrastructure split: the code owns configuration (functions, roles, API,
+  queue, schedules, alarms) and each function's code is deployed separately by
+  a script, so infrastructure applies never revert deployed code. Recurring
+  background schedules stay disabled until cutover. The distribution change is
+  the last stage.

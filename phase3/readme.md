@@ -363,6 +363,15 @@ or registry). Scripts mirror Phase 2's: deploy, verify (the draft roundtrip
 check is reused), and the rollback path. Layout follows Phase 2:
 `phase3/iac`, `scripts`, `packages`.
 
+Stages and flags (all off or empty until turned on; the plan on the adopted
+state stays empty with them off): `deploy_storage` (two buckets, on),
+`deploy_functions` (queue, 16 functions with roles and log groups, one HTTP API
+with about 190 routes and per-route throttling, queue trigger, schedules,
+alarms), `enable_schedules` (recurring background jobs; off until cutover),
+and the existing container flag. The distribution change comes last.
+The infrastructure code owns configuration; each function's code is a
+placeholder replaced by the deploy script, and changes to it are ignored.
+
 ## Edge: directory indexes and the 404 page
 
 - **Indexes.** A CloudFront Function on the static behavior (viewer request)
