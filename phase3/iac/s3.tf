@@ -1,34 +1,47 @@
+resource "aws_s3_bucket" "data" {
+  bucket = "ghost-phase2-data-${data.aws_caller_identity.current.account_id}"
+}
+
+resource "aws_s3_bucket_public_access_block" "data" {
+  bucket = aws_s3_bucket.data.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
 data "aws_caller_identity" "current" {}
 
-# Content bucket: generated pages, feeds, images and their size variants. Keys
-# equal URL paths under /blog. Read by CloudFront through an origin access
-# control (policy added with the distribution); written only by the generator
-# and the image functions.
-resource "aws_s3_bucket" "content" {
-  bucket = "ghost-phase3-content-${data.aws_caller_identity.current.account_id}"
+# Read access for the site distribution, scoped to the image prefix only — the
+# same bucket also holds the SQLite store's segments and manifest, which must
+# never be publicly reachable. The public access block above stays fully on;
+# an OAC bucket policy is not "public" access.
+data "aws_iam_policy_document" "data_cloudfront_read" {
+  count = var.deploy_cloudfront ? 1 : 0
+
+  statement {
+    sid       = "AllowCloudFrontOACReadImages"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.data.arn}/blog/content/images/*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceArn"
+      values   = [aws_cloudfront_distribution.site.arn]
+    }
+  }
 }
 
-resource "aws_s3_bucket_public_access_block" "content" {
-  bucket = aws_s3_bucket.content.id
+resource "aws_s3_bucket_policy" "data_cloudfront_read" {
+  count = var.deploy_cloudfront ? 1 : 0
 
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# Store bucket: the SQLite store (segments, manifest, leases) only. It holds
-# the only copy of the blog, so nothing that writes content may reach it and
-# CloudFront never reads it.
-resource "aws_s3_bucket" "store" {
-  bucket = "ghost-phase3-store-${data.aws_caller_identity.current.account_id}"
-}
-
-resource "aws_s3_bucket_public_access_block" "store" {
-  bucket = aws_s3_bucket.store.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+  bucket = aws_s3_bucket.data.id
+  policy = data.aws_iam_policy_document.data_cloudfront_read[0].json
 }

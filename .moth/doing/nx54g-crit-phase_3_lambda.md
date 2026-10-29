@@ -331,3 +331,11 @@ overrides at the CDN.**
   flip. Rejected: failover to a not-found function (extra route and function
   for the same result); leaving the raw storage error.
 - Still open: OpenTofu layout details only.
+
+
+- Infrastructure state: Phase 3 starts from a full copy of Phase 2's code and
+  a copy of Phase 2's state, so the first plan is empty; Phase 3 resources are
+  added behind flags that default off, and cutover and rollback are the
+  existing container flag turned off and on. Rejected: a skeleton with only new
+  resources plus importing the distribution and the rest piecemeal (more
+  surgery, and it would plan to recreate everything that already exists).

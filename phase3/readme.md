@@ -303,8 +303,11 @@ nothing scheduled), so no final re-sync.
    redeploy it from the infrastructure code against the pre-flip data.
 
 **Infrastructure as code.** `phase3/iac` starts as a copy of `phase2/iac` and
-becomes the source of truth. The distribution is imported into the new state
-through the same empty-plan gate Phase 2 used. `phase2/` stays as a demo and
+becomes the source of truth. Its state starts as a copy of Phase 2's state
+(`phase3/scripts/adopt-phase2-state.sh`), so the first plan is empty (the
+empty-plan gate Phase 2 used for the distribution); Phase 3 resources are then
+added behind flags that default off, and removing the container service at
+cutover is the existing container flag set to off. `phase2/` stays as a demo and
 is not applied anymore: once the distribution is in the new state, Phase 2's
 local backend configuration and cached state are deleted so it cannot be
 applied by accident. Rollback after the container is removed runs from the
