@@ -23,6 +23,8 @@ locals {
   # (Ghost's clients use it) and everything below it.
   route_bases = concat(
     [
+      # The image behavior fails over here when an object is missing.
+      { base = "/blog/content/images", fn = "image-resize" },
       { base = "/blog/r", fn = "link-redirect" },
       { base = "/blog/members", fn = "members-session" },
       { base = "/blog/members/api/comments", fn = "comments" },
