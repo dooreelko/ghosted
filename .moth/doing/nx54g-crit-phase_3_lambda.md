@@ -346,3 +346,8 @@ overrides at the CDN.**
   a script, so infrastructure applies never revert deployed code. Recurring
   background schedules stay disabled until cutover. The distribution change is
   the last stage.
+
+
+- API routes: three variants per path family (bare, trailing slash,
+  wildcard) are kept for now; trimming waits for the first deploy, when the
+  real matching behavior and client usage can be checked.

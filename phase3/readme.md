@@ -407,5 +407,6 @@ placeholder replaced by the deploy script, and changes to it are ignored.
 
 ## Open
 
+- Route variants: each path family has three routes (bare, trailing slash, everything below). After the first deploy, check which forms the clients actually hit and whether the wildcard route matches the slash form, then trim. The count (about 193) only needs to stay under the 300-route default.
 - Generator deleting pages that no longer exist (rare): how it tracks the keys it owns.
 - Presigned upload flow for the admin client.
