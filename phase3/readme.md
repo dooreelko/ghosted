@@ -225,6 +225,31 @@ Payload cap: Lambda request and response are limited to 6 MB, so uploads
 A4 then handles the processing, not the bytes. Bulk downloads follow the same
 rule if needed (fix if hit).
 
+## Storage layout and generator behavior
+
+- **Two buckets.** A content bucket (generated HTML, feeds, search index,
+  theme assets, images and variants) and the store bucket (database segments,
+  manifest, leases). Object keys in the content bucket equal URL paths under
+  `/blog`, so CloudFront passes the path through unchanged. Existing images
+  are copied from the Phase 2 data bucket once at cutover (small).
+  Rationale: the store is the only copy of the blog, so nothing that writes
+  content has access to it, and CloudFront never reads it.
+- **Index files.** An S3 origin does not serve a directory index, so a
+  CloudFront Function maps a directory path to its `index.html` object.
+- **Generator is idempotent and resumable.** It overwrites deterministic keys
+  and can be re-run from the start at any point. Order of work: image variants
+  first, then HTML, then invalidation, so an interruption leaves old pages or
+  complete new pages, never a page that references a missing image.
+- **Interruption is expected; a queue drives the generator.** Every change
+  event (admin write, scheduled publish) enqueues a request; the generator is
+  triggered from the queue. A run that fails or times out leaves its message
+  to reappear after the visibility timeout (set above the generator timeout),
+  with a bounded retry count and a dead-letter queue that raises an alarm.
+  A burst of edits coalesces: one full re-crawl satisfies every pending
+  request, so the generator drops queued duplicates after a successful run.
+- **Deletes are rare** (the blog is mostly append). The generator only deletes
+  keys it created and tracks; it never prunes by listing a prefix.
+
 ## Decided after the spike
 
 - **Classic Lambda for all functions** (including members-session, comments, admin: Express inside the function, behind one API Gateway HTTP API). Web functions are not used.
@@ -237,5 +262,6 @@ rule if needed (fix if hit).
 
 ## Open
 
+- Generator deleting pages that no longer exist (rare): how it tracks the keys it owns.
 - Presigned upload flow for the admin client.
 - Cutover from Phase 2 and the cost comparison.

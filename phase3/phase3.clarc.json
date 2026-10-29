@@ -71,6 +71,11 @@
       "id": "cw",
       "label": "CloudWatch",
       "service": "cloudwatch_2"
+    },
+    {
+      "id": "queue",
+      "label": "Generate queue (+ dead-letter)",
+      "service": "sqs"
     }
   ],
   "edges": [
@@ -107,7 +112,7 @@
     },
     {
       "from": "admin",
-      "to": "gen",
+      "to": "queue",
       "label": "site changed"
     },
     {
@@ -127,7 +132,7 @@
     },
     {
       "from": "bg",
-      "to": "gen",
+      "to": "queue",
       "label": "scheduled publish"
     },
     {
@@ -182,6 +187,11 @@
       "from": "apigw",
       "to": "readers",
       "label": "reader routes"
+    },
+    {
+      "from": "queue",
+      "to": "gen",
+      "label": "trigger"
     }
   ],
   "hints": {
@@ -220,6 +230,10 @@
     "apigw": {
       "leftOf": "admin",
       "sameRow": "admin"
+    },
+    "queue": {
+      "leftOf": "gen",
+      "sameRow": "gen"
     }
   },
   "joinPorts": "all"

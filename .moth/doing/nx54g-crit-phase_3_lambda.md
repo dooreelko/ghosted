@@ -197,3 +197,32 @@ and the function-URL mix for readers.
 function that CloudFront calls (readers, render preview, admin), not only the
 admin groups. Background functions have no HTTP route; schedules and other
 functions invoke them.
+
+
+
+**Decisions (session 3): storage and generator**
+- Two buckets: a content bucket (generated pages, feeds, images and
+  variants) and the store bucket (database only). Object keys equal URL paths
+  under the blog base path. Why: the store is the only copy of the blog, so no
+  content writer may reach it and the CDN never reads it. Rejected: one shared
+  bucket with prefix-scoped permissions (guarantees depend on policy
+  discipline); the one-off image copy at cutover is cheap.
+- The generator is idempotent and safely re-runnable at any point: images
+  first, then pages, then invalidation, so an interruption never leaves a page
+  pointing at a missing image. Pipeline retries interrupted runs.
+- Deletes are rare (blog is mostly append). The generator only removes keys it
+  created and tracks; never prunes by listing a prefix.
+- Still open: retry mechanism for interrupted runs, tracking of owned keys
+  for deletion, CloudFront cache keys and invalidation scope, cutover from
+  Phase 2, cost comparison, OpenTofu layout.
+
+
+- Generator retries: a queue sits in front of the generator; admin writes
+  and scheduled publishes enqueue, the generator is triggered from it. Failed
+  or timed-out runs reappear after the visibility timeout, with a bounded
+  retry count and a dead-letter queue that raises an alarm. Bursts of edits
+  coalesce into one full re-crawl. Rejected: async invocation with built-in
+  retries (little control over retry timing, no coalescing); a workflow
+  service (heavier than a blog this size needs).
+- Still open: tracking of owned keys for deletion, CloudFront cache keys and
+  invalidation scope, cutover from Phase 2, cost comparison, OpenTofu layout.
