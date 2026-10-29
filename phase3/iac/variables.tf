@@ -69,3 +69,27 @@ variable "deploy_storage" {
   description = "Phase 3 storage stage: create the content bucket and the store bucket. Was off while the adopted Phase 2 state was checked for an empty plan (it was); now the first Phase 3 change. Defaults on so every routine apply keeps matching live state once the buckets exist."
   default     = true
 }
+
+variable "deploy_functions" {
+  type        = bool
+  description = "Phase 3 function stage: the generate queue, the Lambda functions with their roles and log groups, the API, the schedules and their alarms. Off by default; nothing here is wired to the distribution (that is a later stage)."
+  default     = false
+}
+
+variable "enable_schedules" {
+  type        = bool
+  description = "Whether the recurring background schedules are enabled. Off until cutover so Phase 3's background jobs never run alongside Phase 2's in-process ones."
+  default     = false
+}
+
+variable "site_url" {
+  type        = string
+  description = "Public URL of the blog, including the base path. Handed to the functions as Ghost's URL."
+  default     = "https://the-well-architected-cloud.com/blog"
+}
+
+variable "smtp_parameter_name" {
+  type        = string
+  description = "Name of the parameter holding the SMTP credential (read by the email function). No default -- parameter names stay out of tracked files; supply it from the gitignored tfvars (see .local-secrets.md)."
+  default     = ""
+}
