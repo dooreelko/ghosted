@@ -19,11 +19,11 @@ locals {
     webmentions     = { memory = 256, timeout = 10, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Webmention receiver" }
     content-api     = { memory = 512, timeout = 15, concurrency = 2, store = "ro", content = "none", queue = false, smtp = false, description = "Content API (read-only)" }
     # Render
-    generator = { memory = 2048, timeout = 600, concurrency = 2, store = "ro", content = "rw", content_delete = true, queue = false, smtp = false, description = "Renders pages from a store snapshot, runs the image preflight" }
+    generator = { memory = 2048, timeout = 600, concurrency = 2, store = "ro", content = "rw", content_delete = true, consumes_queue = true, queue = false, smtp = false, description = "Renders pages from a store snapshot, runs the image preflight" }
     preview   = { memory = 1024, timeout = 15, concurrency = 2, store = "ro", content = "ro", queue = false, smtp = false, description = "Draft preview, email web view, unsubscribe, gift preview" }
     # Admin
-    admin-content  = { memory = 1024, timeout = 30, concurrency = 3, store = "rw", content = "none", queue = true, smtp = false, description = "Admin API: posts, pages, tags, schedules" }
-    admin-audience = { memory = 1024, timeout = 30, concurrency = 2, store = "rw", content = "none", queue = true, smtp = false, description = "Admin API: members, newsletters, comments moderation" }
+    admin-content  = { memory = 1024, timeout = 30, concurrency = 3, store = "rw", content = "none", queue = true, smtp = false, scheduler = true, invokes = ["email-send"], description = "Admin API: posts, pages, tags, schedules" }
+    admin-audience = { memory = 1024, timeout = 30, concurrency = 2, store = "rw", content = "none", queue = true, smtp = false, invokes = ["email-send"], description = "Admin API: members, newsletters, comments moderation" }
     admin-site     = { memory = 512, timeout = 30, concurrency = 2, store = "rw", content = "none", queue = true, smtp = false, description = "Admin API: auth, users, settings, themes" }
     admin-heavy    = { memory = 2048, timeout = 300, concurrency = 1, store = "rw", content = "rw", queue = true, smtp = false, description = "Admin API: uploads, imports, exports" }
     # Background
@@ -33,7 +33,7 @@ locals {
     sqlite-checkpoint = { memory = 1024, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Checkpoint, compaction and orphan sweep" }
   }
 
-  active_functions = var.deploy_functions ? local.functions : {}
+  active_functions = { for name, f in local.functions : name => f if var.deploy_functions }
 }
 
 data "archive_file" "placeholder" {
@@ -129,6 +129,54 @@ data "aws_iam_policy_document" "function" {
     }
   }
 
+  # The generator is triggered from the generate queue.
+  dynamic "statement" {
+    for_each = try(each.value.consumes_queue, false) ? [1] : []
+    content {
+      sid       = "ConsumeGenerate"
+      effect    = "Allow"
+      actions   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"]
+      resources = [aws_sqs_queue.generate[0].arn]
+    }
+  }
+
+  # Starting another function (the newsletter send). Built from the name so
+  # the roles do not depend on each other.
+  dynamic "statement" {
+    for_each = length(try(each.value.invokes, [])) > 0 ? [1] : []
+    content {
+      sid     = "InvokeFunctions"
+      effect  = "Allow"
+      actions = ["lambda:InvokeFunction"]
+      resources = [
+        for f in each.value.invokes :
+        "arn:aws:lambda:us-east-1:${data.aws_caller_identity.current.account_id}:function:ghost-phase3-${f}"
+      ]
+    }
+  }
+
+  # Scheduling a post creates a one-shot schedule at runtime (not in this
+  # code); the schedule runs as the scheduler role.
+  dynamic "statement" {
+    for_each = try(each.value.scheduler, false) ? [1] : []
+    content {
+      sid       = "OneShotSchedules"
+      effect    = "Allow"
+      actions   = ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule"]
+      resources = ["arn:aws:scheduler:us-east-1:${data.aws_caller_identity.current.account_id}:schedule/ghost-phase3/*"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = try(each.value.scheduler, false) ? [1] : []
+    content {
+      sid       = "PassSchedulerRole"
+      effect    = "Allow"
+      actions   = ["iam:PassRole"]
+      resources = [aws_iam_role.scheduler[0].arn]
+    }
+  }
+
   # Only the generator deletes, and only keys it created and tracks.
   dynamic "statement" {
     for_each = try(each.value.content_delete, false) ? [1] : []
@@ -209,6 +257,7 @@ resource "aws_lambda_function" "function" {
       STORE_BUCKET       = aws_s3_bucket.store[0].bucket
       CONTENT_BUCKET     = aws_s3_bucket.content[0].bucket
       GENERATE_QUEUE_URL = aws_sqs_queue.generate[0].url
+      SCHEDULER_ROLE_ARN = aws_iam_role.scheduler[0].arn
     }
   }
 
