@@ -31,3 +31,8 @@ output "store_bucket" {
   description = "Name of the SQLite store bucket; null until deploy_storage."
   value       = one(aws_s3_bucket.store[*].bucket)
 }
+
+output "api_endpoint" {
+  description = "Invoke URL of the Phase 3 API (null until deploy_functions). Reached through CloudFront, not directly."
+  value       = one(aws_apigatewayv2_api.site[*].api_endpoint)
+}
