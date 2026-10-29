@@ -14,7 +14,7 @@
     },
     {
       "id": "cdn",
-      "label": "CloudFront (path behaviors)",
+      "label": "CloudFront (path behaviors, index function, 404 page)",
       "service": "cloudfront"
     },
     {

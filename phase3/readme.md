@@ -183,14 +183,15 @@ CloudFront and never reach the API. Default 25 behaviors per distribution.
 |---|---|---|---|---|
 | 1 | `/content/images/*` | S3; origin group fails over to the API on a miss | R1 `image-resize` | long |
 | 2 | `/r/*` | API | R2 `link-redirect` | none |
-| 3 | `/members/*` (incl. `/members/api/comments*`) | API | R3 `members-session`, R4 `comments` | comment browse and counts short, rest none |
+| 3a | `/members/api/comments/counts*` | API | R4 `comments` | cached per the origin's own `public` header; no cookies forwarded, key is path + `ids` |
+| 3b | `/members/*` (incl. the other comment routes) | API | R3 `members-session`, R4 `comments` | origin marks these private/no-store, so not cached; session cookie forwarded |
 | 4 | `/webmentions/*` | API | R7 `webmentions` | none |
 | 5 | `/ghost/api/content/*` | API | R8 `content-api` | short |
 | 6 | `/ghost/api/admin/*` | API | A1-A4, see "Admin dispatch" | none |
 | 7 | `/p/*`, `/email/*`, `/unsubscribe/*`, `/gift/*` | API | G2 `preview` | none |
 | 8 | default `/*` | S3 static (pages, feeds, sitemap, search index, theme assets, media, files, built admin client, `/members/.well-known` key set emitted by the generator) | none | per object |
 
-About 10 behaviors (row 7 is four patterns). Enabling R5/R6 (not planned)
+About 11 behaviors (row 7 is four patterns). Enabling R5/R6 (not planned)
 adds routes on the API, not behaviors beyond the Stripe and webhook paths.
 
 Background functions B1-B4 have no HTTP route.
@@ -247,8 +248,140 @@ rule if needed (fix if hit).
   with a bounded retry count and a dead-letter queue that raises an alarm.
   A burst of edits coalesces: one full re-crawl satisfies every pending
   request, so the generator drops queued duplicates after a successful run.
+- **Invalidation: one wildcard over the blog path per run**, as the last step
+  of the run. It does not depend on what changed, so an interrupted and
+  retried run still ends with a full invalidation. Cost: images and feeds
+  leave the cache too and refill from S3 (negligible at this size). Per-path
+  invalidation was rejected: a run that dies after writing but before
+  invalidating would, on retry, see nothing changed and leave stale pages
+  cached. Revisit only if it becomes a problem.
+- **HTML cache lifetime is long (about a day).** Freshness comes from the
+  per-run invalidation, not from expiry. Rejected: a short lifetime as a
+  backstop for failed invalidations (more origin traffic; the retried run
+  already repeats the invalidation).
+- **Cache keys (decided): the origin's Cache-Control decides.**
+  Checked live (anonymous visitor): comment counts come back `public` and are
+  not member-specific (Ghost registers the route before loading the member
+  session), so that one route is cached without cookies, keyed by path and
+  `ids`. Comment browse/read/replies, the member call (204 when anonymous) and
+  the site info call all come back `private, no-store`, and browse carries
+  per-comment liked/disliked state, so they are not cached and forward the
+  session cookie. The cache policy honors origin headers with no TTL overrides.
+  Static pages and assets and the Content API are cached without cookies;
+  admin, link redirect and preview are not cached. The origin's counts cache
+  lifetime is a Ghost config value (zero in Phase 2), to be set, not overridden
+  at the CDN.
 - **Deletes are rare** (the blog is mostly append). The generator only deletes
   keys it created and tracks; it never prunes by listing a prefix.
+
+## Cutover from Phase 2
+
+Copy-based, as in Phase 2, but without the downtime window: the old setup
+keeps serving until the flip. Accepted: anything written to the old setup
+after the database copy is not carried over (single author, no signups,
+nothing scheduled), so no final re-sync.
+
+1. Create the content and store buckets. Copy the images into the content
+   bucket at their final keys; copy the database into the new store with
+   Phase 2's seed and export tools. Secrets and the signing keys inside the
+   database carry over, so member sessions, magic links and old newsletter
+   tracking and unsubscribe links keep working.
+2. Deploy the functions, the API, the queue and the alarms, with background
+   schedules off. Run the generator to completion (idempotent, resumable).
+3. Validate before touching the distribution: crawl the live URL list
+   (sitemap and feeds) and compare status, redirects and content with the
+   new site; an old tracked link and an old unsubscribe link; a member
+   session carried over; admin login plus a draft create, read and delete
+   with an image, plus the API-404 checks listed under the edge section. Budget alarm, dead-letter alarm and concurrency caps must
+   be in place first.
+4. Flip: apply the distribution change, then the wildcard invalidation, then
+   switch the background schedules on.
+5. Validate again through the live path.
+6. Good: remove the Lightsail service. Keep the old data bucket and the
+   image repository until the owner says otherwise (decided: keep). Bad: restore the
+   distribution to the old origin; if the container was already removed,
+   redeploy it from the infrastructure code against the pre-flip data.
+
+**Infrastructure as code.** `phase3/iac` starts as a copy of `phase2/iac` and
+becomes the source of truth. The distribution is imported into the new state
+through the same empty-plan gate Phase 2 used. `phase2/` stays as a demo and
+is not applied anymore: once the distribution is in the new state, Phase 2's
+local backend configuration and cached state are deleted so it cannot be
+applied by accident. Rollback after the container is removed runs from the
+Phase 3 code, which keeps the Lightsail flag.
+
+## Cost comparison (estimate from measured traffic)
+
+Phase 2 baseline: about $12-13 a month, of which $10 is the container service
+(the account is on the free trial for it today).
+
+**Measured traffic** (CloudFront access logs, last 30 days to 2026-10-29):
+about 33,000 requests to the whole distribution (more than half are bots
+probing the root site and come back as errors), 8,300 under the blog path,
+about 1,400 human page views, 730 image requests, 720 members-API calls (243
+of them the member-session check, 349 comment counts) and about 2,700 admin
+API calls (the owner editing). So dynamic traffic is a few thousand requests a
+month, three orders of magnitude below the free allowances.
+
+| Item | Phase 3 monthly | Notes |
+|---|---|---|
+| Lambda (all functions) | $0 | Perpetual free tier is 1M requests and 400k GB-seconds; this uses under 1% |
+| API Gateway HTTP API | ~$0.005 | $1.00 per million requests (first 300M, us-east-1); ~4k requests; the first 1M a month is free for a new account's first 12 months |
+| S3 (content + store) | ~$0.1-0.5 | Storage is a few tens of MB; requests from generator writes and cold-start restores |
+| CloudFront | $0 incremental | Existing distribution, inside the always-free 1 TB and 10M requests; invalidations: one path per generator run |
+| Queue (SQS), schedules | $0 | SQS is always free up to 1M requests a month; Scheduler has a 14M allowance |
+| CloudWatch alarms and Lambda logs | ~$0-0.5 | Built-in Lambda metrics replace the custom boot metrics |
+| Parameter Store, SNS | ~$0 | As today |
+| CloudFront access logs (page stats) | ~$0.20 per 1M requests | Same in both phases; ~$0.007 at 33k |
+| Old data bucket + image repository kept for rollback | ~$0.1-0.3 | Until the owner removes them |
+| **Total** | **about $0.5-1.5** | vs **$12-13** |
+
+Saving: about $11-12 a month, almost all of it the container service.
+Headroom: traffic could grow a few hundred times before any line leaves its
+free allowance. The unconfirmed number: the 1,000 free invalidation paths a
+month (one path per run, so irrelevant at this scale).
+
+**Considered and not pursued:** having a CloudFront Function answer the
+anonymous member-session check itself. At 243 calls a month it saves nothing.
+
+## Infrastructure as code
+
+Same approach as Phase 2, as a copy that becomes the source of truth:
+OpenTofu with the AWS provider pinned to 5.x, a versioned S3 remote backend
+configured from a gitignored file, instance-specific values in gitignored
+variable files and the exact resource identifiers only in `.local-secrets.md`,
+one file per component (storage, IAM, functions, API, queue and schedules,
+CloudFront, monitoring, access logs, outputs), and staged flags that default
+off so infrastructure comes up in steps (buckets first, then functions and
+API, the distribution change last). The existing distribution is imported
+behind an empty-plan gate and stays undeletable. Function bundles are built
+and trimmed per function and published as zip packages (no container image
+or registry). Scripts mirror Phase 2's: deploy, verify (the draft roundtrip
+check is reused), and the rollback path. Layout follows Phase 2:
+`phase3/iac`, `scripts`, `packages`.
+
+## Edge: directory indexes and the 404 page
+
+- **Indexes.** A CloudFront Function on the static behavior (viewer request)
+  appends `index.html` to paths ending in `/`, and redirects extension-less
+  paths without a trailing slash (including bare `/blog`) to the slash version
+  with a 301, as Ghost does. Paths with an extension pass through. The
+  generator sets each object's content type when it writes it (feeds keep
+  their feed type), and the static behavior's cache key ignores query strings
+  and cookies. The built-in default root object cannot do this: it only covers
+  the site root.
+- **404 page (decided: distribution custom error response).** The generator
+  renders the theme's 404 page to an object under the blog path; a custom
+  error response maps 404 to it and returns status 404. Only 404 is mapped,
+  and the content bucket grants the distribution listing so a missing key is a
+  true 404 rather than a 403; the root site's own 403 is untouched. Error
+  responses are configured per distribution, not per behavior, so a 404 from
+  the API (Ghost returns JSON with status 404 for a missing resource) also
+  gets the HTML page. Accepted; tested in validation: in the admin, open a
+  deleted post and delete something, and in the comments widget, request a
+  missing comment, confirming the clients still behave. Rejected: failover to
+  a not-found function (extra route and function for the same result), and the
+  raw storage error page (unfriendly).
 
 ## Decided after the spike
 
@@ -264,4 +397,3 @@ rule if needed (fix if hit).
 
 - Generator deleting pages that no longer exist (rare): how it tracks the keys it owns.
 - Presigned upload flow for the admin client.
-- Cutover from Phase 2 and the cost comparison.

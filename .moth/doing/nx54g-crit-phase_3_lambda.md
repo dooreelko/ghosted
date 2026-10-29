@@ -226,3 +226,108 @@ functions invoke them.
   service (heavier than a blog this size needs).
 - Still open: tracking of owned keys for deletion, CloudFront cache keys and
   invalidation scope, cutover from Phase 2, cost comparison, OpenTofu layout.
+
+
+- Invalidation scope: one wildcard over the blog path at the end of each
+  generator run. Why: independent of what changed, so an interrupted and
+  retried run still ends fully invalidated. Accepted: images and feeds also
+  leave the cache and refill from storage (negligible for a small blog);
+  revisit only if it becomes a problem. Rejected: invalidating only changed
+  paths (a run that dies between write and invalidate leaves stale pages on
+  retry unless "written but not invalidated" state is kept); short cache
+  lifetime with no invalidation (stale after every change).
+- Still open: cache keys (cookies, HTML cache lifetime), tracking of owned
+  keys for deletion, cutover from Phase 2, cost comparison, OpenTofu layout.
+
+
+- HTML cache lifetime is long (about a day); freshness comes from the
+  per-run invalidation. Rejected: a short lifetime as a backstop (more origin
+  traffic, and the retried run already repeats the invalidation).
+
+
+**Decision: cache behavior follows the origin's own Cache-Control, no TTL
+overrides at the CDN.**
+- Checked live as an anonymous visitor: only comment counts are marked
+  public and are not member-specific; comment browse, the member call and
+  the site info call are private and uncacheable, and browse carries
+  per-member state.
+- So: the counts route is cached without cookies (keyed by path and its ids
+  parameter), with its lifetime set through Ghost's own config; everything
+  else under the members API forwards the session cookie and is not cached.
+  Static pages and assets and the Content API are cached without cookies;
+  admin, link redirect and preview are not cached.
+- Rejected: caching comment browse with the session cookie in the cache key
+  (needs an override against Ghost's private header, for almost no traffic).
+- Still open: tracking of owned keys for deletion, cutover from Phase 2,
+  cost comparison, OpenTofu layout.
+
+
+**Decisions: cutover from Phase 2**
+- Copy-based cutover on two new buckets (content, store). Images copied once
+  to their final keys; the database copied into the new store. The old setup
+  keeps serving until the distribution flip, so there is no downtime window.
+  Accepted: writes to the old setup after the copy are not carried over
+  (single author, no signups, nothing scheduled). Hence no final re-sync and
+  no schedule reconciliation.
+- Secrets and the signing keys live in the database and the shared secret
+  store, so member sessions, magic links and old newsletter links survive.
+- Order: deploy with background schedules off, run the generator to
+  completion, validate (URL parity crawl against the live site, old tracked
+  and unsubscribe links, carried-over member session, admin draft roundtrip,
+  alarms and caps in place), flip the distribution, invalidate, enable
+  schedules, validate again. Good: remove the container service. Bad: restore
+  the distribution; if the container is already gone, redeploy it from the
+  infrastructure code against the pre-flip data. No soak period with the
+  container running.
+- Infrastructure code for Phase 3 is a copy of Phase 2's and becomes the
+  source of truth; the distribution is imported into its state through the
+  empty-plan gate. Phase 2 stays as a demo, unused.
+- Rejected: staged cutover on a shared live store (double-fire risk for jobs
+  and email, for no gain with a single author); stop-the-world restore with a
+  downtime window (unnecessary without a store format change).
+- Still open: redirects and custom routes on the live blog and the 404 page,
+  whether the distribution leaves Phase 2's state, cost comparison, OpenTofu
+  layout details.
+
+
+- The live blog has no Ghost redirects or custom routes, so no redirect
+  mechanism is needed at the edge; only the 404 page and directory indexes.
+- After the distribution is imported into Phase 3's state, Phase 2's local
+  backend configuration and cached state are deleted so Phase 2 can no longer
+  be applied. Rollback after the container is removed runs from the Phase 3
+  code (which keeps the container flag). The old data bucket and the container
+  image repository are kept until the owner says otherwise.
+- Still open: 404 page and directory-index handling at the edge, cost
+  comparison, OpenTofu layout details.
+
+
+- Cost: expected about $0.5-1.5 a month against about $12-13 for Phase 2,
+  computed from measured traffic (a few thousand dynamic requests a month,
+  far inside every free allowance). The zero-cost goal holds with large
+  headroom. Not pursued: answering the anonymous member-session check at the
+  edge to save function calls (negligible at this traffic).
+- Still open: 404 page and directory-index handling at the edge, OpenTofu
+  layout details.
+
+
+- Infrastructure code follows Phase 2's logic: OpenTofu, versioned remote
+  state, one file per component, staged flags defaulting off (storage first,
+  functions and API next, distribution change last), the distribution adopted
+  behind an empty-plan gate, instance values and resource identifiers kept out
+  of tracked files, same scripts layout (deploy, verify, rollback). Differences
+  are packaging only: per-function zip bundles instead of a container image.
+
+
+**Decisions: edge handling of indexes and 404**
+- Directory indexes: an edge function maps directory paths to their index
+  object and redirects slash-less paths to the slash form, as Ghost does; the
+  generator sets content types per object; static pages are cached without
+  query strings or cookies.
+- 404 page: the standard distribution-level custom error response, mapping
+  404 to a generator-rendered theme page and keeping status 404. Accepted
+  side effect: API 404s (JSON in Ghost) also receive the HTML page, because
+  error responses are per distribution, not per behavior. Mitigation: admin
+  and widget behavior on missing resources is a validation step before the
+  flip. Rejected: failover to a not-found function (extra route and function
+  for the same result); leaving the raw storage error.
+- Still open: OpenTofu layout details only.
