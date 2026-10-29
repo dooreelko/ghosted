@@ -30,7 +30,7 @@ jq -e '.resources | length > 0' "$TMP/state.json" >/dev/null ||
 echo "== preparing Phase 3 backend"
 cd "$ROOT/phase3/iac"
 tofu init -backend-config=backend.hcl -input=false >/dev/null
-if [ -n "$(tofu state list)" ]; then
+if [ -n "$(tofu state list 2>/dev/null || true)" ]; then
   echo "Phase 3 state already holds resources; refusing to overwrite" >&2
   exit 1
 fi
