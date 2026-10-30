@@ -1,0 +1,10 @@
+# The Ghost image's tree (what gets pruned and traced) running on the Node
+# version Lambda will run, so the traced loads and the natives match the target.
+ARG GHOST_IMAGE
+ARG NODE_MAJOR=22
+FROM docker.io/library/node:${NODE_MAJOR}-bookworm-slim AS node
+FROM ${GHOST_IMAGE}
+USER root
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules

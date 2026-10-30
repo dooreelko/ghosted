@@ -562,6 +562,24 @@ the real one.
   the arm64 install (the build now removes it and checks every database
   binary is present).
 
+### Node 24 (checked 2026-10-30): blocked on the shipped Ghost
+
+Ghost's own engines field accepts Node 22.23+ and 24.20+, and the natives we
+need (better-sqlite3 12.11.1, re2 1.26.1) have Node 24 builds for both
+architectures; the store client passes its 119 tests on 24.22.2 after moving to
+better-sqlite3 12 (11.x has no Node 24 build). But the Ghost build in the image
+(6.62) fails on Node 24.22 at start: `require()` of the ES module `got` while it
+is being imported elsewhere (a require-race error), also inside the members
+entry. The runtime therefore stays on Node 22 (a variable, `node_runtime`) and
+the build takes `NODE_MAJOR`; moving to 24 needs a Ghost release that runs on
+it, i.e. the rebuild on the 6.73 release, then a rebuild and the variable.
+Switching the runtime before the code is rebuilt breaks the functions (native
+ABI), as it briefly did here. The AWS provider moved to 6.x for the 24 runtime
+name; no other plan change.
+
+The arm64 zip's natives were also run, under qemu emulation on the build host
+(real aarch64 binaries; timings under emulation are meaningless).
+
 ## Decided after the spike
 
 - **Classic Lambda for all functions** (including members-session, comments, admin: Express inside the function, behind one API Gateway HTTP API). Web functions are not used.

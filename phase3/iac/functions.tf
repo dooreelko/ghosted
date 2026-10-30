@@ -240,7 +240,7 @@ resource "aws_lambda_function" "function" {
   function_name = "ghost-phase3-${each.key}"
   description   = each.value.description
   role          = aws_iam_role.function[each.key].arn
-  runtime       = "nodejs22.x"
+  runtime       = var.node_runtime
   architectures = ["arm64"]
   handler       = "index.handler"
   memory_size   = each.value.memory
