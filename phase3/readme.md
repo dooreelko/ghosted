@@ -378,6 +378,19 @@ placeholder replaced by the deploy script, and changes to it are ignored.
 
 ## Edge: directory indexes and the 404 page
 
+**Implemented (flag `deploy_phase3_edge`, off):** one apply swaps the site distribution's /blog
+behaviors from the container to the Phase 3 origins. Off, the plan is empty (the Phase 2
+behaviors are kept verbatim behind the flag), so turning it off again is the rollback. On, the
+plan adds a cache policy honoring the origin's headers, a query-only request policy, a content
+access control, two edge functions (directory indexes and slash redirects; anonymous member
+check), the content bucket policy (read plus listing) and changes the distribution: two
+origins and the image origin group, the 404 error response, and 15 behaviors in this order:
+images (bucket, falling over to the resizer on 403/404), link redirect, comment counts (cached
+by the origin's header, query only), member and session reads (edge function, cookie
+forwarded), members, webmentions, content API, admin API, preview, email, unsubscribe, gift,
+static pages (bucket, index function) and the bare base path. The admin client is not hosted by
+Phase 3 yet: while the container service exists its paths stay there.
+
 - **Anonymous member checks (decided).** A CloudFront Function on the
   member and session read routes (the two Ghost answers with 204 for a visitor
   who is not signed in) checks for Ghost's members session cookie. No cookie:

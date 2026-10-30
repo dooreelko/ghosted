@@ -88,50 +88,87 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
-  ordered_cache_behavior {
-    allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_disabled.id
-    cached_methods             = ["GET", "HEAD"]
-    compress                   = true
-    default_ttl                = 0
-    field_level_encryption_id  = ""
-    max_ttl                    = 0
-    min_ttl                    = 0
-    origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
-    path_pattern               = "blog/ghost/*"
-    realtime_log_config_arn    = ""
-    response_headers_policy_id = ""
-    smooth_streaming           = false
-    # See the blog/* behaviour below for why this is a ternary.
-    target_origin_id       = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
-    trusted_key_groups     = []
-    trusted_signers        = []
-    viewer_protocol_policy = "redirect-to-https"
-    grpc_config {
-      enabled = false
+  # Phase 3 behaviors (deploy_phase3_edge): see edge.tf for the list and its order.
+  dynamic "ordered_cache_behavior" {
+    for_each = var.deploy_phase3_edge ? local.phase3_behavior_set : {}
+    content {
+      path_pattern           = ordered_cache_behavior.value.pattern
+      target_origin_id       = ordered_cache_behavior.value.origin
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ordered_cache_behavior.value.methods
+      cached_methods         = ["GET", "HEAD"]
+      compress               = true
+      cache_policy_id = (
+        ordered_cache_behavior.value.cache == "optimized" ? data.aws_cloudfront_cache_policy.caching_optimized.id :
+        ordered_cache_behavior.value.cache == "origin" ? aws_cloudfront_cache_policy.origin_headers[0].id :
+        data.aws_cloudfront_cache_policy.caching_disabled.id
+      )
+      origin_request_policy_id = (
+        ordered_cache_behavior.value.request == "viewer" ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id :
+        ordered_cache_behavior.value.request == "query" ? aws_cloudfront_origin_request_policy.query_only[0].id :
+        null
+      )
+
+      dynamic "function_association" {
+        for_each = ordered_cache_behavior.value.function == null ? [] : [ordered_cache_behavior.value.function]
+        content {
+          event_type   = "viewer-request"
+          function_arn = function_association.value == "index" ? aws_cloudfront_function.index[0].arn : aws_cloudfront_function.anonymous_member[0].arn
+        }
+      }
     }
   }
 
-  ordered_cache_behavior {
-    allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cache_policy_id            = data.aws_cloudfront_cache_policy.caching_disabled.id
-    cached_methods             = ["GET", "HEAD"]
-    compress                   = true
-    default_ttl                = 0
-    field_level_encryption_id  = ""
-    max_ttl                    = 0
-    min_ttl                    = 0
-    origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
-    path_pattern               = "blog/members/*"
-    realtime_log_config_arn    = ""
-    response_headers_policy_id = ""
-    smooth_streaming           = false
-    target_origin_id           = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
-    trusted_key_groups         = []
-    trusted_signers            = []
-    viewer_protocol_policy     = "redirect-to-https"
-    grpc_config {
-      enabled = false
+  dynamic "ordered_cache_behavior" {
+    for_each = var.deploy_phase3_edge ? [] : [1]
+    content {
+      allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+      cache_policy_id            = data.aws_cloudfront_cache_policy.caching_disabled.id
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = true
+      default_ttl                = 0
+      field_level_encryption_id  = ""
+      max_ttl                    = 0
+      min_ttl                    = 0
+      origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
+      path_pattern               = "blog/ghost/*"
+      realtime_log_config_arn    = ""
+      response_headers_policy_id = ""
+      smooth_streaming           = false
+      # See the blog/* behaviour below for why this is a ternary.
+      target_origin_id       = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
+      trusted_key_groups     = []
+      trusted_signers        = []
+      viewer_protocol_policy = "redirect-to-https"
+      grpc_config {
+        enabled = false
+      }
+    }
+  }
+
+  dynamic "ordered_cache_behavior" {
+    for_each = var.deploy_phase3_edge ? [] : [1]
+    content {
+      allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+      cache_policy_id            = data.aws_cloudfront_cache_policy.caching_disabled.id
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = true
+      default_ttl                = 0
+      field_level_encryption_id  = ""
+      max_ttl                    = 0
+      min_ttl                    = 0
+      origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
+      path_pattern               = "blog/members/*"
+      realtime_log_config_arn    = ""
+      response_headers_policy_id = ""
+      smooth_streaming           = false
+      target_origin_id           = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
+      trusted_key_groups         = []
+      trusted_signers            = []
+      viewer_protocol_policy     = "redirect-to-https"
+      grpc_config {
+        enabled = false
+      }
     }
   }
 
@@ -146,7 +183,7 @@ resource "aws_cloudfront_distribution" "site" {
   # 404s for a missing key, so a plain S3 origin has no way to ever create
   # the variant.
   dynamic "ordered_cache_behavior" {
-    for_each = var.deploy_cloudfront ? [1] : []
+    for_each = var.deploy_cloudfront && !var.deploy_phase3_edge ? [1] : []
     content {
       path_pattern           = "blog/content/images/*"
       target_origin_id       = "images-with-app-fallback"
@@ -158,52 +195,58 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
-  ordered_cache_behavior {
-    allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cache_policy_id            = data.aws_cloudfront_cache_policy.blog_short_ttl.id
-    cached_methods             = ["GET", "HEAD"]
-    compress                   = true
-    default_ttl                = 0
-    field_level_encryption_id  = ""
-    max_ttl                    = 0
-    min_ttl                    = 0
-    origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
-    path_pattern               = "blog/*"
-    realtime_log_config_arn    = ""
-    response_headers_policy_id = ""
-    smooth_streaming           = false
-    # With deploy_cloudfront = false this keeps pointing at the Phase 1 EC2
-    # origin below; flipping the flag (Task 9's cutover runbook) switches it
-    # to the Lightsail origin instead.
-    target_origin_id       = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
-    trusted_key_groups     = []
-    trusted_signers        = []
-    viewer_protocol_policy = "redirect-to-https"
-    grpc_config {
-      enabled = false
+  dynamic "ordered_cache_behavior" {
+    for_each = var.deploy_phase3_edge ? [] : [1]
+    content {
+      allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+      cache_policy_id            = data.aws_cloudfront_cache_policy.blog_short_ttl.id
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = true
+      default_ttl                = 0
+      field_level_encryption_id  = ""
+      max_ttl                    = 0
+      min_ttl                    = 0
+      origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
+      path_pattern               = "blog/*"
+      realtime_log_config_arn    = ""
+      response_headers_policy_id = ""
+      smooth_streaming           = false
+      # With deploy_cloudfront = false this keeps pointing at the Phase 1 EC2
+      # origin below; flipping the flag (Task 9's cutover runbook) switches it
+      # to the Lightsail origin instead.
+      target_origin_id       = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
+      trusted_key_groups     = []
+      trusted_signers        = []
+      viewer_protocol_policy = "redirect-to-https"
+      grpc_config {
+        enabled = false
+      }
     }
   }
 
-  ordered_cache_behavior {
-    allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cache_policy_id            = data.aws_cloudfront_cache_policy.blog_short_ttl.id
-    cached_methods             = ["GET", "HEAD"]
-    compress                   = true
-    default_ttl                = 0
-    field_level_encryption_id  = ""
-    max_ttl                    = 0
-    min_ttl                    = 0
-    origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
-    path_pattern               = "blog"
-    realtime_log_config_arn    = ""
-    response_headers_policy_id = ""
-    smooth_streaming           = false
-    target_origin_id           = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
-    trusted_key_groups         = []
-    trusted_signers            = []
-    viewer_protocol_policy     = "redirect-to-https"
-    grpc_config {
-      enabled = false
+  dynamic "ordered_cache_behavior" {
+    for_each = var.deploy_phase3_edge ? [] : [1]
+    content {
+      allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+      cache_policy_id            = data.aws_cloudfront_cache_policy.blog_short_ttl.id
+      cached_methods             = ["GET", "HEAD"]
+      compress                   = true
+      default_ttl                = 0
+      field_level_encryption_id  = ""
+      max_ttl                    = 0
+      min_ttl                    = 0
+      origin_request_policy_id   = var.deploy_cloudfront ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id : data.aws_cloudfront_origin_request_policy.all_viewer.id
+      path_pattern               = "blog"
+      realtime_log_config_arn    = ""
+      response_headers_policy_id = ""
+      smooth_streaming           = false
+      target_origin_id           = var.deploy_cloudfront ? "lightsail-ghost-phase2" : "ghost-classic-appserver-vpc-origin"
+      trusted_key_groups         = []
+      trusted_signers            = []
+      viewer_protocol_policy     = "redirect-to-https"
+      grpc_config {
+        enabled = false
+      }
     }
   }
 
@@ -287,6 +330,65 @@ resource "aws_cloudfront_distribution" "site" {
       member {
         origin_id = "lightsail-ghost-phase2"
       }
+    }
+  }
+
+  # Phase 3 origins: the content bucket (read through its own access control)
+  # and the HTTP API in front of every dynamic function.
+  dynamic "origin" {
+    for_each = var.deploy_phase3_edge ? [1] : []
+    content {
+      origin_id                = "s3-phase3-content"
+      domain_name              = aws_s3_bucket.content[0].bucket_regional_domain_name
+      origin_access_control_id = aws_cloudfront_origin_access_control.content[0].id
+    }
+  }
+
+  dynamic "origin" {
+    for_each = var.deploy_phase3_edge ? [1] : []
+    content {
+      origin_id   = "api-phase3"
+      domain_name = local.api_domain
+
+      custom_origin_config {
+        http_port              = 80
+        https_port             = 443
+        origin_protocol_policy = "https-only"
+        origin_ssl_protocols   = ["TLSv1.2"]
+      }
+    }
+  }
+
+  # A size variant missing from the bucket fails over to the resizing function.
+  # With listing granted a missing key is a 404; 403 stays in the list for safety.
+  dynamic "origin_group" {
+    for_each = var.deploy_phase3_edge ? [1] : []
+    content {
+      origin_id = "images-phase3"
+
+      failover_criteria {
+        status_codes = [403, 404]
+      }
+
+      member {
+        origin_id = "s3-phase3-content"
+      }
+
+      member {
+        origin_id = "api-phase3"
+      }
+    }
+  }
+
+  # The generator's rendered 404 page, with status 404. Applies to the whole
+  # distribution: an API 404 gets the page too (accepted, tested in validation).
+  dynamic "custom_error_response" {
+    for_each = var.deploy_phase3_edge ? [1] : []
+    content {
+      error_code            = 404
+      response_code         = 404
+      response_page_path    = "/blog/404.html"
+      error_caching_min_ttl = 10
     }
   }
 

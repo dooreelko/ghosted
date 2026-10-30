@@ -105,3 +105,14 @@ variable "node_runtime" {
   description = "Lambda runtime for the functions; must match the Node major the zip was built for (NODE_MAJOR in build-functions.sh, native modules are per Node ABI)."
   default     = "nodejs24.x"
 }
+
+variable "deploy_phase3_edge" {
+  type        = bool
+  default     = false
+  description = "The cutover flip: points the /blog behaviors of the site distribution at the Phase 3 origins (content bucket and HTTP API) and adds the edge functions, the 404 page and the bucket policy. Needs deploy_functions and deploy_storage. Applying it moves live traffic."
+
+  validation {
+    condition     = !var.deploy_phase3_edge || (var.deploy_functions && var.deploy_storage)
+    error_message = "deploy_phase3_edge requires deploy_functions and deploy_storage."
+  }
+}
