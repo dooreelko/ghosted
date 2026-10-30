@@ -30,6 +30,9 @@ const dbPath = path.join(process.env.DATA_DIR ?? '/tmp', 'ghost.db');
 const FRESH_TTL_MS = Number(process.env.FRESH_TTL_MS ?? 30_000);
 
 let store; // { manifestStore, objectStore }
+let lastCheck = 0;
+let knownEtag;
+let shipsAtConfigure = 0;
 
 // objectStore is injectable for tests; Lambda passes nothing and gets S3.
 export async function configure({ objectStore } = {}) {
@@ -38,6 +41,10 @@ export async function configure({ objectStore } = {}) {
   objectStore ??= createS3ObjectStore({ bucket: process.env.STORE_BUCKET, client: new S3Client({ region }) });
   const manifestStore = createManifestStore(objectStore);
   store = { manifestStore, objectStore };
+  // Read before the first restore: a write that lands after this point shows up
+  // as a changed etag at the first check, never as a missed one.
+  knownEtag = (await manifestStore.read()).etag;
+  shipsAtConfigure = shipCount();
 
   for (const p of findDatabaseInfoPaths(ghostRoot)) patchDatabaseInfoAt(p, SqliteS3Client, require);
 
@@ -97,22 +104,29 @@ export async function initMemberServices() {
   ]);
 }
 
+// Call once initialization is done. Boot itself can write (Ghost fills in
+// settings defaults); those writes are ours, not another function's.
+export async function markReady() {
+  await flushPendingShips(dbPath);
+  if (shipCount() !== shipsAtConfigure) knownEtag = (await store.manifestStore.read()).etag;
+}
+
 // Freshness: a warm environment reuses its restored database for at most
 // FRESH_TTL_MS, then asks the manifest whether anything changed. A change
 // (another function wrote) drops Ghost's single pooled connection, so the next
 // query restores from the store, and the settings cache is reloaded.
-let lastCheck = 0;
-let knownEtag;
 
 export async function ensureFresh() {
   const now = Date.now();
   if (now - lastCheck < FRESH_TTL_MS) return;
   lastCheck = now;
   const { etag } = await store.manifestStore.read();
-  if (knownEtag !== undefined && etag !== knownEtag) {
+  if (etag !== knownEtag) {
+    if (process.env.DEBUG_FRESH) console.error('fresh: manifest changed, reconnecting');
     const knex = R('server/data/db').knex;
     await knex.destroy();
     knex.initialize();
+    await knex.raw('select 1'); // acquire now, which restores from the store
     await R('server/services/settings/settings-service').init();
   }
   knownEtag = etag;
