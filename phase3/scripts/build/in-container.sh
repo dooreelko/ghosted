@@ -59,6 +59,8 @@ for t in members-session.local.mjs write-path.local.mjs generator.local.mjs read
   (cd $TRACE_WORK/ghost-lambda && TRACE_OUT=/tmp/tr/$t-%p.json node test/$t > /tmp/trace-$t.log 2>&1) || { echo "trace run failed: $t" >&2; tail -20 /tmp/trace-$t.log >&2; exit 1; }
   tail -3 /tmp/trace-$t.log
 done
+# Ghost's S3 storage adapter is only loaded when it is configured (not in the local tests): trace its load
+NODE_OPTIONS="-r /build/trace-loads.js" TRACE_OUT=/tmp/tr/s3storage-%p.json node -e "require('/home/ghost/core/server/adapters/storage/S3Storage.js')"
 unset NODE_OPTIONS
 
 echo "== prune"

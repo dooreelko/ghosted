@@ -668,6 +668,17 @@ redirects to the original) and the generator.
   it is 512 MB, not the plain 128 MB planned; Ghost-backed readers have a 30 s timeout since
   their cold starts (6-9 s) sit near Lambda's 10 s init limit, after which the init simply
   continues inside the first request.
+- Parity with the live site (`phase3/scripts/validate-parity.mjs`): every generated page, feed,
+  sitemap and asset against the live URL, ignoring only the Ghost release strings and run
+  timestamps. Result: all 108 identical. Two things it found and fixed: pages lacked image
+  dimensions until the renderer was given Ghost's S3 storage adapter on the content bucket
+  (Ghost reads the image to measure it), and on a cold start a few lookups still miss, so the
+  generator crawls twice per run (the second pass has the successful lookups cached).
+- Missing size variants are created by the generator (70 images used by the pages were already
+  present; one deleted on purpose was rebuilt with the right type and cache headers). The
+  invalidation step exists and stays off until the edge flag is on.
+- The checkpoint (plain, 256 MB) and the maintenance function (token and expired-comp cleanups,
+  512 MB) run on Lambda; the gift jobs belong to the paid tier and are not deployed.
 - Webmentions do not work yet: receiving one dispatches a verification job to Ghost's jobs
   service, which runs it after the response in the same process, and a Lambda is frozen once
   it responds. Needs the job to be awaited or moved to a queue (the same question as the

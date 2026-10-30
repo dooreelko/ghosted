@@ -34,6 +34,9 @@ export async function createGeneratorHandler({ objectStore, contentStore, queue,
     context.callbackWaitsForEmptyEventLoop = false;
     return withStore(async () => {
       const started = Date.now();
+      // Two passes: on a cold start Ghost's image-size lookups can miss for a few images (the page
+      // then lacks their dimensions); the second pass has the successful lookups cached and gets the rest.
+      await crawl({ origin, fetchLocal, store: contentStore, log: (m) => console.log(`pass 1: ${m}`) });
       const result = await crawl({ origin, fetchLocal, store: contentStore, log: (m) => console.log(m) });
       if (result.failures.length) console.log('crawl failures', JSON.stringify(result.failures.slice(0, 20)));
       // Images before the invalidation: a page never points at an image that is not there yet.

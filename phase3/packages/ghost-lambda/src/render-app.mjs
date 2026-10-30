@@ -2,6 +2,7 @@
 // preview function serves. Follows boot.js of the bundled release.
 import fs from 'node:fs';
 import path from 'node:path';
+import { buildS3StorageConfig } from './storage-config.mjs';
 import { configure, initCore, initMemberServices, markReady, mark, ghostRoot, R } from './runtime.mjs';
 
 const svc = (p) => {
@@ -19,6 +20,11 @@ function installThemes() {
 
 export async function createRenderApp({ api = false, ...opts } = {}) {
   const config = await configure(opts);
+  // Image dimensions in the pages come from reading the images out of the content bucket.
+  if (process.env.CONTENT_BUCKET) {
+    config.set('storage:active', 'S3Storage');
+    config.set('storage:S3Storage', buildS3StorageConfig({ bucket: process.env.CONTENT_BUCKET, region: process.env.AWS_REGION, ghostUrl: process.env.GHOST_URL }));
+  }
   installThemes();
   await initCore();
   await svc('server/services/route-settings').init();
