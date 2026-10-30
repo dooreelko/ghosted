@@ -19,7 +19,7 @@ locals {
     webmentions     = { memory = 512, timeout = 30, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Webmention receiver" }
     content-api     = { memory = 512, timeout = 30, concurrency = 2, store = "ro", content = "none", queue = false, smtp = false, description = "Content API (read-only)" }
     # Render
-    generator = { memory = 2048, timeout = 600, concurrency = 2, store = "ro", content = "rw", content_delete = true, consumes_queue = true, queue = false, smtp = false, description = "Renders pages from a store snapshot, runs the image preflight" }
+    generator = { memory = 2048, timeout = 600, concurrency = 2, store = "ro", content = "rw", content_delete = true, consumes_queue = true, invalidates = true, queue = false, smtp = false, description = "Renders pages from a store snapshot, runs the image preflight" }
     preview   = { memory = 1024, timeout = 30, concurrency = 2, store = "ro", content = "ro", queue = false, smtp = false, description = "Draft preview, email web view, unsubscribe, gift preview" }
     # Admin
     admin-content  = { memory = 1024, timeout = 30, concurrency = 3, store = "rw", content = "none", queue = true, smtp = false, scheduler = true, invokes = ["email-send"], description = "Admin API: posts, pages, tags, schedules" }
@@ -188,6 +188,18 @@ data "aws_iam_policy_document" "function" {
     }
   }
 
+  # The wildcard invalidation at the end of a generator run. The permission is
+  # always there; the run only invalidates when the edge flag is on.
+  dynamic "statement" {
+    for_each = try(each.value.invalidates, false) ? [1] : []
+    content {
+      sid       = "InvalidateSite"
+      effect    = "Allow"
+      actions   = ["cloudfront:CreateInvalidation"]
+      resources = [aws_cloudfront_distribution.site.arn]
+    }
+  }
+
   dynamic "statement" {
     for_each = each.value.queue ? [1] : []
     content {
@@ -263,6 +275,9 @@ resource "aws_lambda_function" "function" {
       }, each.value.smtp ? {
       SMTP_PARAMETER_NAME = var.smtp_parameter_name
       MAIL_USER           = var.mail_user
+      } : {}, try(each.value.invalidates, false) ? {
+      DISTRIBUTION_ID = aws_cloudfront_distribution.site.id
+      INVALIDATE      = var.deploy_phase3_edge ? "1" : "0"
     } : {})
   }
 

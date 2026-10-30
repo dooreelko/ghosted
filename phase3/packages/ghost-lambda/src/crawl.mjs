@@ -3,7 +3,8 @@
 // (tracked in the store) are ever deleted.
 import { URL } from 'node:url';
 
-const SKIP_PREFIXES = ['ghost/', 'members/', 'r/', 'p/', 'email/', 'unsubscribe/', 'gift/', 'webmentions/', 'content/images/'];
+const SKIP_PREFIXES = ['ghost/', 'members/', 'r/', 'p/', 'email/', 'unsubscribe/', 'gift/', 'webmentions/'];
+const IMAGE_PREFIX = 'content/images/';
 const TEXTUAL = /^(text\/|application\/(xml|rss\+xml|atom\+xml|json|javascript|xhtml\+xml))/;
 const TRACK_KEY = '_generator/keys.json';
 
@@ -43,6 +44,7 @@ export async function crawl({ origin, fetchLocal, store, seeds = ['/', '/sitemap
   const seen = new Set();
   const written = new Set();
   const failures = [];
+  const images = new Set(); // image paths the pages use (originals and size variants), not fetched here
 
   // A link found in a page, as a base-relative path or null if not ours / not static.
   const toLocal = (link) => {
@@ -53,6 +55,7 @@ export async function crawl({ origin, fetchLocal, store, seeds = ['/', '/sitemap
     const rel = u.pathname.slice(basePath.length) || '/';
     const noSlash = rel.replace(/^\/+/, '');
     if (SKIP_PREFIXES.some((p) => noSlash.startsWith(p))) return null;
+    if (noSlash.startsWith(IMAGE_PREFIX)) { images.add(decodeURIComponent(rel)); return null; }
     return rel;
   };
 
@@ -103,5 +106,5 @@ export async function crawl({ origin, fetchLocal, store, seeds = ['/', '/sitemap
   }
   await store.put(TRACK_KEY, Buffer.from(JSON.stringify([...written].sort())), { contentType: 'application/json', cacheControl: 'no-store' });
   log(`crawl: ${written.size} written, ${deleted} deleted, ${failures.length} failures`);
-  return { written: [...written], deleted, failures };
+  return { written: [...written], deleted, failures, images: [...images].sort() };
 }

@@ -39,3 +39,12 @@ test('crawl follows links, skips dynamic paths, tracks and prunes its own keys',
   assert.ok(store.objects.has('blog/not-ours.txt'), 'a key it never tracked is left alone');
   assert.equal(r.deleted, 1);
 });
+
+test('crawl collects image paths without fetching them', async () => {
+  const site = { '/blog/': page('<img src="/blog/content/images/2025/a.jpg" srcset="/blog/content/images/size/w600/2025/a.jpg 600w, /blog/content/images/size/w1000/2025/a.jpg 1000w">') };
+  const asked = [];
+  const fetchLocal = async (p) => { asked.push(p); return site[p] ?? { status: 404, headers: new Map([['content-type', 'text/html']]), body: Buffer.from('nf') }; };
+  const r = await crawl({ origin: 'https://x.test/blog', fetchLocal, store: createMemoryContentStore(), seeds: ['/'] });
+  assert.deepEqual(r.images, ['/content/images/2025/a.jpg', '/content/images/size/w1000/2025/a.jpg', '/content/images/size/w600/2025/a.jpg']);
+  assert.ok(!asked.some((p) => p.includes('content/images')));
+});
