@@ -353,3 +353,30 @@ overrides at the CDN.**
   keys ending in a slash; slash requests match the wildcard route and reach
   the right function.
 
+
+
+- Packaging of the Ghost-backed functions: one shared dependency tree, pruned
+  to what the functions actually load (traced, not hand-picked), shipped as a
+  single zip that every Ghost-backed function points at, each with its own
+  entry file, memory size, timeout and route set. Plain handlers (link
+  redirect, checkpoint) stay separate small zips. This refines "purpose-built
+  bundle per function": trimming per function buys almost nothing because the
+  shared core already is most of what any Ghost-backed function loads; what
+  differs per function is the entry file and the sizing.
+  Rejected: a JavaScript bundle (smaller on disk but boots ~45% slower and
+  holds 40-85% more memory, fragile patches per Ghost upgrade); hand-pruning
+  packages; a container image (not needed once pruned; the zip limit is met
+  with a wide margin). Layers are optional later, for deploy speed only.
+  Binaries are built for the function architecture (arm64 chosen; x86_64 is a
+  one-line fallback if a native module fights back).
+- Sizing: sized from measured memory, not trimmed to the floor. Plain
+  handlers are smallest, Ghost-backed functions start at 512-1024 MB (CPU
+  scales with memory, so a CPU-bound boot costs about the same at any size
+  and starts faster larger), and the final sizes come from a sweep on real
+  Lambda. At measured traffic Lambda stays inside the free tier either way.
+- Delivery split: the primary goal is the read path (static site, generator,
+  members and comments functions, redirect, image variants, content API,
+  preview) including logged-in reader sessions; the admin functions and the
+  email, scheduled-publish and maintenance functions are the secondary goal
+  and follow once reads work. Reader sign-in sends the magic-link email, so
+  the members function has read access to the SMTP credential.

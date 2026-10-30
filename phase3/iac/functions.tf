@@ -14,7 +14,7 @@ locals {
     # Reader-facing
     image-resize    = { memory = 512, timeout = 30, concurrency = 2, store = "none", content = "rw", queue = false, smtp = false, description = "Size-variant fallback on a missing image" }
     link-redirect   = { memory = 128, timeout = 10, concurrency = 2, store = "rw", content = "none", queue = false, smtp = false, description = "Newsletter click-tracking redirect" }
-    members-session = { memory = 1024, timeout = 15, concurrency = 5, store = "rw", content = "none", queue = false, smtp = false, description = "Members app: session, member, magic links" }
+    members-session = { memory = 1024, timeout = 15, concurrency = 5, store = "rw", content = "none", queue = false, smtp = true, description = "Members app: session, member, magic links" }
     comments        = { memory = 512, timeout = 15, concurrency = 3, store = "rw", content = "none", queue = false, smtp = false, description = "Comments router" }
     webmentions     = { memory = 512, timeout = 10, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Webmention receiver" }
     content-api     = { memory = 512, timeout = 15, concurrency = 2, store = "ro", content = "none", queue = false, smtp = false, description = "Content API (read-only)" }
