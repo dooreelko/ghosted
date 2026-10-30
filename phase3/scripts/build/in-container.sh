@@ -49,9 +49,13 @@ else
   TRACE_WORK=/tmp/work
 fi
 unset database__client database__connection__filename
+# Trace against real content and the real themes when a dump is supplied: lazy requires only
+# show up in the code paths the site actually uses.
+cp -r /themes/. /home/ghost/content/themes/ 2>/dev/null || true
+[ -f /tracedb.sqlite ] && cp /tracedb.sqlite /tmp/g.db
 export GHOST_ROOT=/home/ghost SEED_DB=/tmp/g.db GHOST_URL=http://localhost:2368/blog DATA_DIR=/tmp/lam
 export NODE_OPTIONS="-r /build/trace-loads.js"
-for t in members-session.local.mjs write-path.local.mjs; do
+for t in members-session.local.mjs write-path.local.mjs generator.local.mjs; do
   (cd $TRACE_WORK/ghost-lambda && TRACE_OUT=/tmp/tr/$t-%p.json node test/$t > /tmp/trace-$t.log 2>&1) || { echo "trace run failed: $t" >&2; tail -20 /tmp/trace-$t.log >&2; exit 1; }
   tail -3 /tmp/trace-$t.log
 done
@@ -60,6 +64,12 @@ unset NODE_OPTIONS
 echo "== prune"
 rm -rf /out/root && mkdir -p /out/root
 node /build/prune-tree.js /out/root /tmp/tr/*.json
+
+echo "== themes (the release's defaults, then ours)"
+mkdir -p /out/root/content/themes
+cp -r /home/ghost/content/themes/. /out/root/content/themes/
+[ -d /themes ] && cp -r /themes/. /out/root/content/themes/ || true
+ls /out/root/content/themes
 
 echo "== lambda code"
 mkdir -p /out/root/lambda/node_modules/@ghost-phase3
