@@ -467,6 +467,31 @@ Reading:
   at any size and starts faster when larger; warm short requests favor smaller.
   At measured traffic Lambda stays inside the free tier either way.
 
+### Bundling attempt (esbuild, members subset, 2026-10-30)
+
+Same members entry with static requires, bundled for Node 22 with the native
+modules and unused database drivers left external (script in `spike/`).
+
+- Size: 57 MB bundle, 31 MB minified, against 20.4 MB of JavaScript the
+  unbundled boot actually loads. A bundler keeps everything statically
+  reachable, including lazily required code; the loader skips that, so
+  bundling does not shrink what runs, it ships more.
+- It does not run without per-package fixes. Three kinds of break appeared in
+  turn: a UMD package (`jsonc-parser`) that esbuild cannot follow (needed an
+  alias to its module build), dynamic requires with computed paths (email
+  templates), and code that reads files relative to its own location (Ghost's
+  config loader reads its default config next to itself, which a single file
+  breaks). The first two were patched; the third stopped the experiment.
+- Not measured: boot time and memory of a working bundle. The unbundled
+  baseline in this container was ~1.65 s wall (slower than the earlier
+  ~0.6 s ready time, which excludes process start and the first-run
+  migration), so only relative numbers would count.
+- Reading: no evidence bundling helps. Gains would come from minification
+  and fewer file reads, which Node's compile cache partly covers, and the
+  cost is a fragile per-package patch list on every Ghost upgrade. The plan
+  stays: ship Ghost's installed tree (pruned of unused packages if wanted)
+  plus per-function entry files, not a bundle.
+
 ## Decided after the spike
 
 - **Classic Lambda for all functions** (including members-session, comments, admin: Express inside the function, behind one API Gateway HTTP API). Web functions are not used.
