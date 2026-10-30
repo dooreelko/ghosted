@@ -455,6 +455,17 @@ Reading:
   higher. Capping the heap trims only a few percent.
 - A cold start is the boot time plus the store restore from S3, at Lambda's
   CPU; measured after the first deploy as decided.
+- Node compile cache (`NODE_COMPILE_CACHE`, same machine, members group):
+  boot ~690 ms uncached vs ~570 ms with a warmed cache, about 17-20% faster.
+  The first run that fills the cache is slower (~845 ms), and the cache
+  directory is ~16 MB, so it has to be built ahead and shipped in the zip.
+  CPU time only; memory unchanged. To confirm on Lambda after the first deploy.
+- Sizing after this: plain handlers (link redirect 128 MB, checkpoint 256 MB),
+  image resizer 512 MB, webmentions 512 MB; Ghost-backed functions keep their
+  sizes until a memory sweep on real Lambda. Below ~1,769 MB (one vCPU) CPU
+  scales with memory, so a CPU-bound boot costs about the same memory-seconds
+  at any size and starts faster when larger; warm short requests favor smaller.
+  At measured traffic Lambda stays inside the free tier either way.
 
 ## Decided after the spike
 
