@@ -655,6 +655,11 @@ redirects to the original) and the generator.
   it is 512 MB, not the plain 128 MB planned; Ghost-backed readers have a 30 s timeout since
   their cold starts (6-9 s) sit near Lambda's 10 s init limit, after which the init simply
   continues inside the first request.
+- Webmentions do not work yet: receiving one dispatches a verification job to Ghost's jobs
+  service, which runs it after the response in the same process, and a Lambda is frozen once
+  it responds. Needs the job to be awaited or moved to a queue (the same question as the
+  scheduled-publish and newsletter jobs); a webmention today answers 500. Low priority: single
+  author, nothing shows the feature in use.
 - Not done: image variants generated eagerly by the generator (the fallback function covers a
   missing variant for now), the invalidation step (needs the distribution), the queue trigger
   and schedules (flag), the background functions and the admin functions.
