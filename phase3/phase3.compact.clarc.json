@@ -1,6 +1,28 @@
 {
   "title": "Phase 3: serverless Ghost (compact, per function group)",
   "description": "Same system as phase3, one node per function group: reader-facing (6), render (2), admin (4), background (4). The API also routes the preview function in the render group (edge left out to keep the layout readable)",
+  "groups": [
+    {
+      "id": "g_readers",
+      "label": "6 reader-facing functions",
+      "service": "group"
+    },
+    {
+      "id": "g_admin",
+      "label": "4 admin functions",
+      "service": "group"
+    },
+    {
+      "id": "g_gen",
+      "label": "2 render functions",
+      "service": "group"
+    },
+    {
+      "id": "g_bg",
+      "label": "4 background functions",
+      "service": "group"
+    }
+  ],
   "nodes": [
     {
       "id": "viewer",
@@ -24,23 +46,27 @@
     },
     {
       "id": "readers",
-      "label": "Reader-facing functions: image-resize, link-redirect, members-session, comments, webmentions, content-api",
-      "service": "lambda"
+      "label": "image-resize, link-redirect, members-session, comments, webmentions, content-api",
+      "service": "lambda",
+      "group": "g_readers"
     },
     {
       "id": "admin",
-      "label": "Admin functions: admin-content, admin-audience, admin-site, admin-heavy",
-      "service": "lambda"
+      "label": "admin-content, admin-audience, admin-site, admin-heavy",
+      "service": "lambda",
+      "group": "g_admin"
     },
     {
       "id": "gen",
-      "label": "Render functions: generator, preview",
-      "service": "lambda"
+      "label": "generator, preview",
+      "service": "lambda",
+      "group": "g_gen"
     },
     {
       "id": "bg",
-      "label": "Background functions: scheduled-publish, email-send, maintenance, sqlite-checkpoint",
-      "service": "lambda"
+      "label": "scheduled-publish, email-send, maintenance, sqlite-checkpoint",
+      "service": "lambda",
+      "group": "g_bg"
     },
     {
       "id": "events",
