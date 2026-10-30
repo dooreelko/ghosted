@@ -22,6 +22,13 @@ import { buildMailConfig } from './mail-config.mjs';
 // Ghost picks its config file by NODE_ENV (the Ghost image sets it; Lambda does not).
 process.env.NODE_ENV ??= 'production';
 
+// Init timing: one JSON log line per cold start, so the cold start can be split
+// into its parts from the function's logs.
+const startedAt = Date.now();
+const marks = [['node_start_to_runtime_load', Math.round(process.uptime() * 1000)]];
+export const mark = (name, extra) => marks.push([name, Date.now() - startedAt, ...(extra === undefined ? [] : [extra])]);
+export const reportMarks = () => console.log(JSON.stringify({ initTiming: marks }));
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
@@ -62,6 +69,7 @@ export async function configure({ objectStore } = {}) {
     // of its own (a fire-and-forget checkpoint would be frozen mid-way).
     checkpointPolicy: createCheckpointPolicy({ maxWalBytes: Number.MAX_SAFE_INTEGER, maxIntervalMs: Number.MAX_SAFE_INTEGER }),
     leaseStore: createLeaseStore(objectStore),
+    onRestoreComplete: ({ attempts, durationMs }) => mark('store_restore_ms', durationMs),
   };
   registerS3Config(s3Config);
 
@@ -80,6 +88,7 @@ export async function configure({ objectStore } = {}) {
     const { Parameter } = await ssm.send(new GetParameterCommand({ Name: process.env.SMTP_PARAMETER_NAME, WithDecryption: true }));
     config.set('mail', buildMailConfig({ user: process.env.MAIL_USER, pass: Parameter.Value }));
   }
+  mark('smtp_parameter');
   return config;
 }
 
@@ -109,6 +118,7 @@ export async function initCore() {
   const config = R('shared/config');
   const DSM = R('server/data/db/database-state-manager');
   await new DSM({ knexMigratorFilePath: config.get('paths:appRoot') }).makeReady();
+  mark('database_ready');
   await R('server/data/db/info').init();
   svc('server/services/adapter-manager').init();
   R('shared/url-utils');
@@ -120,6 +130,7 @@ export async function initCore() {
   await svc('server/services/gift-links').init();
   svc('server/services/members-metafields').init();
   await svc('server/services/stripe-checkout-config').init();
+  mark('core_services');
 }
 
 export async function initMemberServices() {
@@ -136,12 +147,14 @@ export async function initMemberServices() {
     svc('server/services/comments').init(),
     svc('server/services/email-suppression-list').init(),
   ]);
+  mark('member_services');
 }
 
 // Call once initialization is done. Boot itself can write (Ghost fills in
 // settings defaults); those writes are ours, not another function's.
 export async function markReady() {
   await flushPendingShips(dbPath);
+  mark('boot_writes_flushed');
   if (shipCount() !== shipsAtConfigure) knownEtag = (await store.manifestStore.read()).etag;
 }
 

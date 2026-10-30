@@ -610,6 +610,28 @@ The arm64 zip's natives were run under qemu emulation on the build host (real aa
 binaries; emulated timings are meaningless): Node 24, Ghost 6.73, all four reads correct.
 The zip is 22 MB (19.1 MB of pruned Ghost files in 3,438 files).
 
+### Cold start on Lambda: breakdown and memory sweep (2026-10-30, Node 24, Ghost 6.73, arm64)
+
+Timing marks inside init (one log line per cold start). Typical run, in ms: loading the
+runtime and its libraries 520-840; S3 clients, manifest, Ghost config and the SMTP
+parameter 440-730; database ready 830-1,140 (including a first store restore of
+450-560); core Ghost services 1,150-1,860 (including a second restore of 370-590);
+member services 620-1,200; app 80-130. Total init 3.6-6.4 s across 9 cold starts.
+
+Memory sweep (members function, cold start each): 512 MB 5.4 s, 1024 MB 3.6-5.3 s,
+1769 MB 4.9-5.7 s, 3008 MB 5.3-5.4 s; peak use 283-338 MB. Reading:
+- The cold start does not depend on memory (and so not on CPU share): it is bound by I/O
+  and latency (store restore round trips, parameter read, first reads of the package's
+  files), plus run-to-run variance of 30% or more. The earlier reasoning that a larger
+  size boots faster at the same cost does not hold here; the smaller size is simply
+  cheaper. members-session is set to 512 MB.
+- The store is restored twice per cold start (the migrator's connection and Ghost's own),
+  about 0.4 s each; skipping the second when nothing was written in between is the one
+  clear saving found (not done yet). Other candidates, not tried: shipping fewer files, a
+  baked compile cache (CPU only, so probably little given the above).
+- The edge answer for anonymous member checks (see Edge) is what keeps visitors from
+  waiting on this.
+
 ## Decided after the spike
 
 - **Classic Lambda for all functions** (including members-session, comments, admin: Express inside the function, behind one API Gateway HTTP API). Web functions are not used.

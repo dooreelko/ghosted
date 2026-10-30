@@ -1,4 +1,4 @@
-import { configure, initCore, initMemberServices, markReady, R } from './runtime.mjs';
+import { configure, initCore, initMemberServices, markReady, mark, reportMarks, R } from './runtime.mjs';
 import { toHandler } from './express-handler.mjs';
 
 // Members app: session, member, sign-in, site info (the R3 function).
@@ -9,5 +9,7 @@ export async function createMembersHandler(opts) {
   await markReady();
   const root = R('shared/express')('lambda');
   root.use(`${config.getSubdir()}/members`, R('server/web/members')());
+  mark('app_built');
+  reportMarks();
   return toHandler(root);
 }
