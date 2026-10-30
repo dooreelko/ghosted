@@ -17,7 +17,6 @@ import {
   flushPendingShips,
   shipCount,
 } from '@ghost-phase3/sqlite-s3';
-import { findDatabaseInfoPaths, patchDatabaseInfoAt } from './database-info-patch.mjs';
 import { buildMailConfig } from './mail-config.mjs';
 
 // Ghost picks its config file by NODE_ENV (the Ghost image sets it; Lambda does not).
@@ -54,7 +53,7 @@ export async function configure({ objectStore } = {}) {
   knownEtag = (await manifestStore.read()).etag;
   shipsAtConfigure = shipCount();
 
-  for (const p of findDatabaseInfoPaths(ghostRoot)) patchDatabaseInfoAt(p, SqliteS3Client, require);
+  useS3Dialect();
 
   const s3Config = {
     manifestStore,
@@ -67,9 +66,12 @@ export async function configure({ objectStore } = {}) {
   registerS3Config(s3Config);
 
   const config = R('shared/config');
-  config.set('database:client', SqliteS3Client);
+  // The client stays the string Ghost's own checks expect; the store wiring
+  // reaches SqliteS3Client through registerS3Config above, since Ghost's config
+  // deep-clones what it holds (functions do not survive that).
+  config.set('database:client', 'better-sqlite3');
   config.set('database:useNullAsDefault', true);
-  config.set('database:connection', { filename: dbPath, s3: { ...s3Config, readerPoolSize: 2, acquireTimeoutMillis: 15000 } });
+  config.set('database:connection', { filename: dbPath });
   config.set('url', process.env.GHOST_URL);
   config.set('logging:transports', ['stdout']);
 
@@ -81,34 +83,58 @@ export async function configure({ objectStore } = {}) {
   return config;
 }
 
-// Ghost services every Ghost-backed function needs (from the boot spike).
+// Ghost (and knex-migrator) resolve the 'better-sqlite3' client by requiring
+// knex's own dialect module. Swap that module's export for the S3-backed client
+// in every installed copy of knex, before Ghost first asks for it.
+function useS3Dialect() {
+  const pnpm = path.join(ghostRoot, 'node_modules', '.pnpm');
+  const copies = fs.readdirSync(pnpm).filter((d) => d.startsWith('knex@'));
+  if (!copies.length) throw new Error('no knex found under the Ghost tree');
+  for (const d of copies) {
+    const dialect = path.join(pnpm, d, 'node_modules/knex/lib/dialects/better-sqlite3/index.js');
+    require(dialect);
+    require.cache[dialect].exports = SqliteS3Client;
+  }
+}
+
+// A service module's export, whether it is the module itself or its default.
+const svc = (p) => {
+  const m = R(p);
+  return m.default ?? m;
+};
+
+// Ghost services every Ghost-backed function needs: the order and the
+// selection follow core/boot.js of the bundled release (6.73).
 export async function initCore() {
   const config = R('shared/config');
   const DSM = R('server/data/db/database-state-manager');
   await new DSM({ knexMigratorFilePath: config.get('paths:appRoot') }).makeReady();
   await R('server/data/db/info').init();
-  R('server/services/adapter-manager').default.init();
+  svc('server/services/adapter-manager').init();
   R('shared/url-utils');
-  await R('server/services/limits').init();
-  await R('server/services/settings/settings-service').init();
-  await R('server/services/i18n').init();
-  R('server/services/gift-links').init();
-  R('server/services/members-custom-fields').init();
+  await svc('server/services/limits').init();
+  await svc('server/services/settings/settings-service').init();
+  await svc('server/services/signing-keys').init();
+  await svc('server/services/internal-keys').init();
+  await svc('server/services/i18n').init();
+  await svc('server/services/gift-links').init();
+  svc('server/services/members-metafields').init();
+  await svc('server/services/stripe-checkout-config').init();
 }
 
 export async function initMemberServices() {
-  R('server/services/email-address').init();
-  await R('server/services/stripe').init();
+  svc('server/services/email-address').init();
+  await svc('server/services/stripe').init();
+  await svc('server/services/member-attribution').init();
+  await svc('server/services/audience-feedback').init();
   await Promise.all([
-    R('server/services/identity-tokens').init(),
-    R('server/services/member-attribution').init(),
-    R('server/services/members').init(),
-    R('server/services/tiers').init(),
-    R('server/services/members-events').init(),
-    R('server/services/permissions').init(),
-    R('server/services/comments').init(),
-    R('server/services/email-suppression-list').init(),
-    R('server/services/audience-feedback').init(),
+    svc('server/services/identity-tokens').init(),
+    svc('server/services/members').init(),
+    svc('server/services/tiers').init(),
+    svc('server/services/members-events').init(),
+    svc('server/services/permissions').init(),
+    svc('server/services/comments').init(),
+    svc('server/services/email-suppression-list').init(),
   ]);
 }
 

@@ -579,23 +579,36 @@ the real one.
   the arm64 install (the build now removes it and checks every database
   binary is present).
 
-### Node 24 (checked 2026-10-30): blocked on the shipped Ghost
+### Node 24 and Ghost 6.73 (2026-10-30)
 
-Ghost's own engines field accepts Node 22.23+ and 24.20+, and the natives we
-need (better-sqlite3 12.11.1, re2 1.26.1) have Node 24 builds for both
-architectures; the store client passes its 119 tests on 24.22.2 after moving to
-better-sqlite3 12 (11.x has no Node 24 build). But the Ghost build in the image
-(6.62) fails on Node 24.22 at start: `require()` of the ES module `got` while it
-is being imported elsewhere (a require-race error), also inside the members
-entry. The runtime therefore stays on Node 22 (a variable, `node_runtime`) and
-the build takes `NODE_MAJOR`; moving to 24 needs a Ghost release that runs on
-it, i.e. the rebuild on the 6.73 release, then a rebuild and the variable.
-Switching the runtime before the code is rebuilt breaks the functions (native
-ABI), as it briefly did here. The AWS provider moved to 6.x for the 24 runtime
-name; no other plan change.
+Ghost's engines field accepts Node 22.23+ and 24.20+, and the natives (better-sqlite3
+12.11.1, re2 1.26.1) have Node 24 builds for both architectures; the store client
+needed better-sqlite3 12 for that (11.x has none) and passes its 119 tests on 24.22.2.
+The 6.62 build failed on Node 24 (a require race on the ES module `got`); the 6.73
+release runs the members entry on Node 24.22.2 (init 1.27 s, RSS 257 MB locally, all
+four reads correct), so the functions move to Node 24 together with Ghost 6.73.
+Switching the runtime without rebuilding the code breaks the functions (native ABI), as
+it briefly did here; `node_runtime` (default nodejs24.x) must match `NODE_MAJOR` of the
+build.
 
-The arm64 zip's natives were also run, under qemu emulation on the build host
-(real aarch64 binaries; timings under emulation are meaningless).
+What the 6.73 release changed for the entries:
+- Ghost's config deep-clones what it holds, so a class-valued database client becomes an
+  empty object. The client stays the string `better-sqlite3`; the S3-backed client replaces
+  knex's own dialect module before Ghost asks for it, and gets its store wiring from the
+  process-wide registration. The database-info patching is gone.
+- The service initialization order and set changed (signing and internal keys, gift links
+  and the checkout config are now initialized in `boot.js`); the entry's init list follows
+  that file and is re-checked on each release.
+- The release image is built from a clean export of the tag
+  (`phase3/scripts/build-ghost-image.sh`), with the default themes fetched at the commits the
+  tag pins, since the clone's working tree holds old build leftovers.
+- The database is migrated offline (the seed script boots the release against the plain file)
+  so no function migrates through the store on a cold start: each commit there is one S3
+  round trip.
+
+The arm64 zip's natives were run under qemu emulation on the build host (real aarch64
+binaries; emulated timings are meaningless): Node 24, Ghost 6.73, all four reads correct.
+The zip is 22 MB (19.1 MB of pruned Ghost files in 3,438 files).
 
 ## Decided after the spike
 

@@ -102,6 +102,6 @@ variable "mail_user" {
 
 variable "node_runtime" {
   type        = string
-  description = "Lambda runtime for the functions. Stays on Node 22 until the bundled Ghost runs on Node 24 (the shipped 6.62 does not: it fails requiring an ES module), then nodejs24.x."
-  default     = "nodejs22.x"
+  description = "Lambda runtime for the functions; must match the Node major the zip was built for (NODE_MAJOR in build-functions.sh, native modules are per Node ABI)."
+  default     = "nodejs24.x"
 }
