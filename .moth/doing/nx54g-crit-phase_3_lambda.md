@@ -304,8 +304,9 @@ overrides at the CDN.**
 - Cost: expected about $0.5-1.5 a month against about $12-13 for Phase 2,
   computed from measured traffic (a few thousand dynamic requests a month,
   far inside every free allowance). The zero-cost goal holds with large
-  headroom. Not pursued: answering the anonymous member-session check at the
-  edge to save function calls (negligible at this traffic).
+  headroom. Earlier not pursued, reversed below: answering the anonymous
+  member-session check at the edge (negligible cost, but see the latency
+  decision).
 - Still open: 404 page and directory-index handling at the edge, OpenTofu
   layout details.
 
@@ -380,3 +381,15 @@ overrides at the CDN.**
   email, scheduled-publish and maintenance functions are the secondary goal
   and follow once reads work. Reader sign-in sends the magic-link email, so
   the members function has read access to the SMTP credential.
+
+
+- Edge answer for anonymous member checks: a CloudFront Function answers the
+  member and session reads with an empty 204 when the request carries no
+  members session cookie; requests with the cookie go to the members function.
+  Why: a members function cold start costs about 5.6 s at 1 GB against 4 ms
+  warm, and at this traffic nearly every call is cold, so visitors' portals
+  wait on a boot to learn they are anonymous; money was never the issue
+  (earlier rejected as negligible, reversed on latency). Accepted: the edge
+  copies one small piece of Ghost's behavior, so it joins the post-cutover
+  validation list. Rejected: a scheduled keep-warm ping (contradicts running
+  only on demand), accepting the delay.

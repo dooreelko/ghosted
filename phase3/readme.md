@@ -184,7 +184,7 @@ CloudFront and never reach the API. Default 25 behaviors per distribution.
 | 1 | `/content/images/*` | S3; origin group fails over to the API on a miss | R1 `image-resize` | long |
 | 2 | `/r/*` | API | R2 `link-redirect` | none |
 | 3a | `/members/api/comments/counts*` | API | R4 `comments` | cached per the origin's own `public` header; no cookies forwarded, key is path + `ids` |
-| 3b | `/members/*` (incl. the other comment routes) | API | R3 `members-session`, R4 `comments` | origin marks these private/no-store, so not cached; session cookie forwarded |
+| 3b | `/members/*` (incl. the other comment routes) | API | R3 `members-session`, R4 `comments` | origin marks these private/no-store, so not cached; session cookie forwarded. The anonymous member and session reads (no cookie) are answered 204 by an edge function (see Edge) |
 | 4 | `/webmentions/*` | API | R7 `webmentions` | none |
 | 5 | `/ghost/api/content/*` | API | R8 `content-api` | short |
 | 6 | `/ghost/api/admin/*` | API | A1-A4, see "Admin dispatch" | none |
@@ -344,8 +344,12 @@ Headroom: traffic could grow a few hundred times before any line leaves its
 free allowance. The unconfirmed number: the 1,000 free invalidation paths a
 month (one path per run, so irrelevant at this scale).
 
-**Considered and not pursued:** having a CloudFront Function answer the
-anonymous member-session check itself. At 243 calls a month it saves nothing.
+**Edge answer for anonymous member checks (decided after the first Lambda
+run):** earlier considered and not pursued on cost grounds (243 calls a
+month). Reversed because of latency, not money: the members function cold
+starts in about 5.6 s billed at 1 GB while a warm call takes 4 ms, and at this
+traffic nearly every call is cold, so each visitor's portal waits on a boot
+just to learn they are anonymous. See "Edge" below.
 
 ## Infrastructure as code
 
@@ -373,6 +377,19 @@ The infrastructure code owns configuration; each function's code is a
 placeholder replaced by the deploy script, and changes to it are ignored.
 
 ## Edge: directory indexes and the 404 page
+
+- **Anonymous member checks (decided).** A CloudFront Function on the
+  member and session read routes (the two Ghost answers with 204 for a visitor
+  who is not signed in) checks for Ghost's members session cookie. No cookie:
+  it returns the empty 204 itself, with the same no-store headers the origin
+  sends, and the request never reaches the API. Cookie present: the request
+  goes through to the members function as before, with the cookie forwarded.
+  Checked: the cookie name is set by Ghost's members service (its SSR cookie),
+  and an anonymous visitor gets 204 on both routes today. Cost: the edge
+  copies one small piece of Ghost's behavior (no cookie, no member); if Ghost
+  ever answered anonymous visitors differently, the two would drift, so this
+  is part of the post-cutover validation list. Effect: members-session boots
+  only for signed-in readers.
 
 - **Indexes.** A CloudFront Function on the static behavior (viewer request)
   appends `index.html` to paths ending in `/`, and redirects extension-less
