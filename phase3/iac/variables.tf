@@ -116,3 +116,14 @@ variable "deploy_phase3_edge" {
     error_message = "deploy_phase3_edge requires deploy_functions and deploy_storage."
   }
 }
+
+variable "deploy_phase3_test_edge" {
+  type        = bool
+  default     = false
+  description = "A separate test-only distribution (its own *.cloudfront.net address, no aliases) with the Phase 3 edge behaviors, to test the edge without touching the live distribution. Needs deploy_functions and deploy_storage."
+
+  validation {
+    condition     = !var.deploy_phase3_test_edge || (var.deploy_functions && var.deploy_storage)
+    error_message = "deploy_phase3_test_edge requires deploy_functions and deploy_storage."
+  }
+}

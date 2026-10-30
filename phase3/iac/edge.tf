@@ -6,7 +6,7 @@
 
 # Query strings only: no cookies, no headers (comment counts, Content API).
 resource "aws_cloudfront_origin_request_policy" "query_only" {
-  count = var.deploy_phase3_edge ? 1 : 0
+  count = local.edge_shared ? 1 : 0
 
   name = "ghost-phase3-query-only"
   cookies_config { cookie_behavior = "none" }
@@ -17,7 +17,7 @@ resource "aws_cloudfront_origin_request_policy" "query_only" {
 # Cache lifetime comes from the origin's own Cache-Control; no cookies or
 # headers in the key, query strings included (the counts' ids, the API key).
 resource "aws_cloudfront_cache_policy" "origin_headers" {
-  count = var.deploy_phase3_edge ? 1 : 0
+  count = local.edge_shared ? 1 : 0
 
   name        = "ghost-phase3-origin-headers"
   min_ttl     = 0
@@ -33,7 +33,7 @@ resource "aws_cloudfront_cache_policy" "origin_headers" {
 }
 
 resource "aws_cloudfront_origin_access_control" "content" {
-  count = var.deploy_phase3_edge ? 1 : 0
+  count = local.edge_shared ? 1 : 0
 
   name                              = "ghost-phase3-content"
   description                       = "Lets the site distribution read the Phase 3 content bucket"
@@ -45,7 +45,7 @@ resource "aws_cloudfront_origin_access_control" "content" {
 # The distribution reads objects and lists the bucket: with listing granted, a
 # missing key is a true 404 (the 404 page below) rather than a 403.
 data "aws_iam_policy_document" "content_read" {
-  count = var.deploy_phase3_edge ? 1 : 0
+  count = local.edge_shared ? 1 : 0
 
   statement {
     actions   = ["s3:GetObject"]
@@ -57,7 +57,7 @@ data "aws_iam_policy_document" "content_read" {
     condition {
       test     = "StringEquals"
       variable = "AWS:SourceArn"
-      values   = [aws_cloudfront_distribution.site.arn]
+      values   = local.content_readers
     }
   }
   statement {
@@ -70,13 +70,13 @@ data "aws_iam_policy_document" "content_read" {
     condition {
       test     = "StringEquals"
       variable = "AWS:SourceArn"
-      values   = [aws_cloudfront_distribution.site.arn]
+      values   = local.content_readers
     }
   }
 }
 
 resource "aws_s3_bucket_policy" "content" {
-  count = var.deploy_phase3_edge ? 1 : 0
+  count = local.edge_shared ? 1 : 0
 
   bucket = aws_s3_bucket.content[0].id
   policy = data.aws_iam_policy_document.content_read[0].json
@@ -86,7 +86,7 @@ resource "aws_s3_bucket_policy" "content" {
 # in / maps to its index.html object; an extension-less path without a trailing
 # slash gets a 301 to the slash form, as Ghost does; the bare base path too.
 resource "aws_cloudfront_function" "index" {
-  count = var.deploy_phase3_edge ? 1 : 0
+  count = local.edge_shared ? 1 : 0
 
   name    = "ghost-phase3-index"
   runtime = "cloudfront-js-2.0"
@@ -113,7 +113,7 @@ resource "aws_cloudfront_function" "index" {
 # A visitor without Ghost's members session cookie is anonymous, and Ghost
 # answers that with an empty 204; answer it here so no function boots for it.
 resource "aws_cloudfront_function" "anonymous_member" {
-  count = var.deploy_phase3_edge ? 1 : 0
+  count = local.edge_shared ? 1 : 0
 
   name    = "ghost-phase3-anonymous-member"
   runtime = "cloudfront-js-2.0"
@@ -130,7 +130,15 @@ resource "aws_cloudfront_function" "anonymous_member" {
 }
 
 locals {
-  api_domain = var.deploy_phase3_edge ? replace(aws_apigatewayv2_api.site[0].api_endpoint, "https://", "") : ""
+  content_readers = compact([
+    var.deploy_phase3_edge ? aws_cloudfront_distribution.site.arn : "",
+    var.deploy_phase3_test_edge ? aws_cloudfront_distribution.phase3_test[0].arn : "",
+  ])
+
+  # The shared pieces exist for the live flip and for the test distribution alike.
+  edge_shared = var.deploy_phase3_edge || var.deploy_phase3_test_edge
+
+  api_domain = local.edge_shared ? replace(aws_apigatewayv2_api.site[0].api_endpoint, "https://", "") : ""
 
   all_methods = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
   read_only   = ["GET", "HEAD"]
@@ -160,4 +168,115 @@ locals {
   phase3_behavior_set = merge(local.phase3_behaviors, var.deploy_lightsail ? {
     "095-admin-ui" = { pattern = "blog/ghost/*", origin = "lightsail-ghost-phase2", methods = local.all_methods, cache = "disabled", request = "viewer", function = null }
   } : {})
+}
+
+# A separate distribution, reachable only by its own *.cloudfront.net address,
+# with the same Phase 3 behaviors and functions as the live flip would give.
+# It lets the edge be tested end to end (directory indexes, the 404 page, the
+# anonymous member check, image failover, cache headers) while the live
+# distribution keeps serving from the container. Pages it serves still carry
+# the real site address in their links.
+resource "aws_cloudfront_distribution" "phase3_test" {
+  count = var.deploy_phase3_test_edge ? 1 : 0
+
+  comment             = "ghost phase3 edge test (not live)"
+  enabled             = true
+  http_version        = "http2"
+  is_ipv6_enabled     = true
+  price_class         = "PriceClass_100"
+  wait_for_deployment = true
+
+  origin {
+    origin_id                = "s3-phase3-content"
+    domain_name              = aws_s3_bucket.content[0].bucket_regional_domain_name
+    origin_access_control_id = aws_cloudfront_origin_access_control.content[0].id
+  }
+
+  origin {
+    origin_id   = "api-phase3"
+    domain_name = local.api_domain
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  origin_group {
+    origin_id = "images-phase3"
+
+    failover_criteria {
+      status_codes = [403, 404]
+    }
+
+    member {
+      origin_id = "s3-phase3-content"
+    }
+
+    member {
+      origin_id = "api-phase3"
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "s3-phase3-content"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    compress               = true
+    cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+  }
+
+  dynamic "ordered_cache_behavior" {
+    for_each = local.phase3_behaviors
+    content {
+      path_pattern           = ordered_cache_behavior.value.pattern
+      target_origin_id       = ordered_cache_behavior.value.origin
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ordered_cache_behavior.value.methods
+      cached_methods         = ["GET", "HEAD"]
+      compress               = true
+      cache_policy_id = (
+        ordered_cache_behavior.value.cache == "optimized" ? data.aws_cloudfront_cache_policy.caching_optimized.id :
+        ordered_cache_behavior.value.cache == "origin" ? aws_cloudfront_cache_policy.origin_headers[0].id :
+        data.aws_cloudfront_cache_policy.caching_disabled.id
+      )
+      origin_request_policy_id = (
+        ordered_cache_behavior.value.request == "viewer" ? data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id :
+        ordered_cache_behavior.value.request == "query" ? aws_cloudfront_origin_request_policy.query_only[0].id :
+        null
+      )
+
+      dynamic "function_association" {
+        for_each = ordered_cache_behavior.value.function == null ? [] : [ordered_cache_behavior.value.function]
+        content {
+          event_type   = "viewer-request"
+          function_arn = function_association.value == "index" ? aws_cloudfront_function.index[0].arn : aws_cloudfront_function.anonymous_member[0].arn
+        }
+      }
+    }
+  }
+
+  custom_error_response {
+    error_code            = 404
+    response_code         = 404
+    response_page_path    = "/blog/404.html"
+    error_caching_min_ttl = 10
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}
+
+output "phase3_test_edge_domain" {
+  value = var.deploy_phase3_test_edge ? aws_cloudfront_distribution.phase3_test[0].domain_name : null
 }
