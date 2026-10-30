@@ -470,27 +470,40 @@ Reading:
 ### Bundling attempt (esbuild, members subset, 2026-10-30)
 
 Same members entry with static requires, bundled for Node 22 with the native
-modules and unused database drivers left external (script in `spike/`).
+modules and unused database drivers left external (scripts in `spike/`).
+Run in the Phase 2 image tree (Ghost 6.62.0); a rebuild on 6.73.0 is not done.
 
-- Size: 57 MB bundle, 31 MB minified, against 20.4 MB of JavaScript the
-  unbundled boot actually loads. A bundler keeps everything statically
-  reachable, including lazily required code; the loader skips that, so
-  bundling does not shrink what runs, it ships more.
-- It does not run without per-package fixes. Three kinds of break appeared in
-  turn: a UMD package (`jsonc-parser`) that esbuild cannot follow (needed an
-  alias to its module build), dynamic requires with computed paths (email
-  templates), and code that reads files relative to its own location (Ghost's
-  config loader reads its default config next to itself, which a single file
-  breaks). The first two were patched; the third stopped the experiment.
-- Not measured: boot time and memory of a working bundle. The unbundled
-  baseline in this container was ~1.65 s wall (slower than the earlier
-  ~0.6 s ready time, which excludes process start and the first-run
-  migration), so only relative numbers would count.
-- Reading: no evidence bundling helps. Gains would come from minification
-  and fewer file reads, which Node's compile cache partly covers, and the
-  cost is a fragile per-package patch list on every Ghost upgrade. The plan
-  stays: ship Ghost's installed tree (pruned of unused packages if wanted)
-  plus per-function entry files, not a bundle.
+Getting it to run took four patches: a UMD package (`jsonc-parser`) aliased
+to its module build, `__dirname`/`__filename` pinned per module to the
+original location (Ghost's config loader reads its defaults next to itself),
+name-preserving minification (plain minification breaks a check by name:
+"Invalid knex instance"), and the native modules external. Computed requires
+(email templates) are still left unresolved. All four members requests
+answer correctly.
+
+| Members boot, same container | Size | Wall time | RSS |
+|---|---|---|---|
+| Installed tree (reference) | 299 MB shipped, 20.4 MB loaded | ~1.67 s | 213 MB |
+| Installed tree + compile cache | same | ~1.34 s | 231 MB |
+| Bundle | 59 MB | ~2.41 s | 394 MB |
+| Bundle + compile cache | same | ~1.68 s | 365 MB |
+| Minified bundle | 32 MB | ~2.49 s | 329 MB |
+| Minified bundle + compile cache | same | ~1.62 s | 292 MB |
+
+Reading:
+- Bundling fixes the shipped size (32-59 MB against 299 MB) but is worse on
+  the two things that cost money: it boots 45-50% slower and holds 40-85%
+  more memory. A bundle is one huge script that is parsed and held as a
+  whole, while the unbundled boot reads only the 20.4 MB it requires.
+  Minification recovers some memory and none of the time; the compile cache
+  helps all variants about equally.
+- Dead-code removal does not apply: Ghost is CommonJS with dynamic loading,
+  so the bundler keeps whatever is statically reachable, more than runs.
+- It also needs a patch list that grows with Ghost upgrades.
+- Decision: no bundle. To fit Lambda's 250 MB package limit, ship the
+  installed tree pruned to what the entry files actually load (the union of
+  loaded files and packages, plus the assets they read), which is ~20 MB of
+  JavaScript plus natives for a members-type function.
 
 ## Decided after the spike
 
