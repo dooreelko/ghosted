@@ -1,5 +1,6 @@
 // Shared boot for every Ghost-backed function: points Ghost at the S3-backed
 // SQLite store, and keeps a warm environment's database fresh between requests.
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -37,6 +38,10 @@ let shipsAtConfigure = 0;
 // objectStore is injectable for tests; Lambda passes nothing and gets S3.
 export async function configure({ objectStore } = {}) {
   process.chdir(ghostRoot);
+  // The code is read-only on Lambda; Ghost wants a content directory that exists.
+  // Must be set before Ghost's config is first loaded.
+  const contentPath = (process.env.paths__contentPath ??= path.join(process.env.DATA_DIR ?? '/tmp', 'content'));
+  for (const d of ['', 'themes', 'data', 'logs', 'public']) fs.mkdirSync(path.join(contentPath, d), { recursive: true });
   const region = process.env.AWS_REGION;
   objectStore ??= createS3ObjectStore({ bucket: process.env.STORE_BUCKET, client: new S3Client({ region }) });
   const manifestStore = createManifestStore(objectStore);

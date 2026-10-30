@@ -21,3 +21,4 @@ phase3/iac/*.tfvars
 phase3/iac/backend.hcl
 phase3/iac/tfplan
 phase3/iac/.build/
+phase3/build/

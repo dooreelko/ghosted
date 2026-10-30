@@ -267,7 +267,7 @@ resource "aws_lambda_function" "function" {
   depends_on = [aws_iam_role_policy.function, aws_cloudwatch_log_group.function]
 
   lifecycle {
-    # The deploy script updates the code.
-    ignore_changes = [filename, source_code_hash]
+    # The deploy script owns the code and the entry point.
+    ignore_changes = [filename, source_code_hash, handler]
   }
 }
