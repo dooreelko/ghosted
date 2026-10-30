@@ -479,6 +479,6 @@ Reading:
 
 ## Open
 
-- Route variants: each path family has three routes (bare, trailing slash, everything below). After the first deploy, check which forms the clients actually hit and whether the wildcard route matches the slash form, then trim. The count (about 193) only needs to stay under the 300-route default.
+- Route variants (resolved at first deploy): API Gateway rejects route keys ending in a slash, so each path family has two routes (bare, everything below), 129 routes in all. Trailing-slash requests (`/posts/`) matched the wildcard route and reached the right function (checked on the placeholders). Bare-path-plus-slash for families that have no wildcard match is not an issue so far; recheck with the real code.
 - Generator deleting pages that no longer exist (rare): how it tracks the keys it owns.
 - Presigned upload flow for the admin client.

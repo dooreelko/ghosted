@@ -19,8 +19,9 @@ locals {
     admin-heavy = ["images", "media", "files", "db", "exports", "members/upload", "posts/upload", "posts/export", "redirects/upload", "themes/upload"]
   }
 
-  # Each base expands to three routes: the path, the path with a trailing slash
-  # (Ghost's clients use it) and everything below it.
+  # Each base expands to two routes: the path and everything below it. API
+  # Gateway rejects route keys ending in a slash, so the trailing-slash form
+  # has to be matched by the wildcard (checked after the first deploy).
   route_bases = concat(
     [
       # The image behavior fails over here when an object is missing.
@@ -46,7 +47,6 @@ locals {
     merge([
       for e in local.route_bases : {
         "ANY ${e.base}"          = e.fn
-        "ANY ${e.base}/"         = e.fn
         "ANY ${e.base}/{proxy+}" = e.fn
       }
     ]...),
@@ -66,7 +66,6 @@ locals {
   throttled_routes = merge([
     for base, l in local.route_limits : {
       "ANY ${base}"          = l
-      "ANY ${base}/"         = l
       "ANY ${base}/{proxy+}" = l
     }
   ]...)

@@ -348,6 +348,8 @@ overrides at the CDN.**
   the last stage.
 
 
-- API routes: three variants per path family (bare, trailing slash,
-  wildcard) are kept for now; trimming waits for the first deploy, when the
-  real matching behavior and client usage can be checked.
+- API routes: two variants per path family (bare, wildcard). The trailing-slash
+  variant was dropped at the first deploy because API Gateway rejects route
+  keys ending in a slash; slash requests match the wildcard route and reach
+  the right function.
+
