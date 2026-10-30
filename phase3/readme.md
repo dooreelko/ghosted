@@ -505,6 +505,39 @@ Reading:
   loaded files and packages, plus the assets they read), which is ~20 MB of
   JavaScript plus natives for a members-type function.
 
+### Pruning by traced loads (2026-10-30, Ghost 6.62.0 image tree)
+
+A preload script records every file the process requires or reads (also
+copies and directory listings); a prune script copies only those files, the
+`package.json` of each package they sit in, the direct files of any directory
+that was listed outside `node_modules` (the migrations folder), and every
+symlink under `node_modules` (package resolution). Traced: the members
+subset, the render subset and a full Ghost boot. Scripts in `spike/`.
+
+| | Installed tree | Pruned tree |
+|---|---|---|
+| Files | ~100,000 | 4,759 (plus 2,920 symlinks) |
+| Size | 299 MB deps + 99 MB core | 27 MB of files, ~55 MB on disk, ~6 MB compressed |
+| Members subset | 213 MB RSS, all four requests correct | 215 MB RSS, identical loaded set, all four correct |
+| Render subset | 249 MB RSS | 249 MB RSS, home, feed, sitemap and 404 correct |
+
+Reading:
+- Pruning keeps what runs and costs nothing in time or memory, unlike a
+  bundle; it fits Lambda's 250 MB limit with a wide margin, so a plain zip
+  (or a dependency layer) is enough and no container image is needed.
+- The first attempts failed on exactly the lazy cases expected: the
+  migrations directory is listed, not required (the database refuses to
+  start without it), and a static admin page is copied, not read. Both were
+  fixed by tracing directory listings and copies. Anything loaded only on a
+  rare path (image upload, import and export, email send, theme upload, the
+  image library) is missing until an entry file exercises it, so each
+  function's entry is traced with its real flows and the verify scripts run
+  against the pruned tree before it is deployed.
+- Natives (better-sqlite3, re2) are in the traced set; sharp is not, since
+  none of these subsets load it. It belongs to the image-resize function and
+  the admin upload paths.
+- Needs rebuilding on the 6.73.0 release before any real deploy.
+
 ## Decided after the spike
 
 - **Classic Lambda for all functions** (including members-session, comments, admin: Express inside the function, behind one API Gateway HTTP API). Web functions are not used.
