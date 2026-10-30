@@ -13,7 +13,7 @@ const list = JSON.parse(execFileSync('aws', ['s3api', 'list-objects-v2', '--buck
 const keys = (list.Contents ?? []).map((o) => o.Key).filter((k) => !k.startsWith('blog/content/images/')).sort();
 
 const normalize = (text) => text
-  .replace(/&#x([0-9a-fA-F]+);/g, (m, h) => `&#x${h.toUpperCase()};`)
+  .replace(/&#x([0-9a-fA-F]+);/g, (m, h) => String.fromCodePoint(parseInt(h, 16))) // 6.73 escapes more characters as references
   .replace(/<lastmod>[^<]*<\/lastmod>/g, '<lastmod>X</lastmod>').replace(/<lastBuildDate>[^<]*<\/lastBuildDate>/g, '<lastBuildDate>X</lastBuildDate>').replace(/<generator>Ghost [^<]*<\/generator>/g, '<generator>Ghost X</generator>')
   .replace(/<meta name="generator" content="Ghost [^"]*">/g, '<meta name="generator" content="Ghost X">')
   .replace(/portal@~[0-9.]+/g, 'portal@~X').replace(/sodo-search@~[0-9.]+/g, 'sodo-search@~X')

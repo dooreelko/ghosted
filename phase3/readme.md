@@ -670,7 +670,7 @@ redirects to the original) and the generator.
   continues inside the first request.
 - Parity with the live site (`phase3/scripts/validate-parity.mjs`): every generated page, feed,
   sitemap and asset against the live URL, ignoring only the Ghost release strings and run
-  timestamps. Result: all 108 identical. Two things it found and fixed: pages lacked image
+  timestamps. Result: all 108 identical (the feed after decoding character references; 6.73 escapes more characters as references than 6.62). Two things it found and fixed: pages lacked image
   dimensions until the renderer was given Ghost's S3 storage adapter on the content bucket
   (Ghost reads the image to measure it), and on a cold start a few lookups still miss, so the
   generator crawls twice per run (the second pass has the successful lookups cached).
