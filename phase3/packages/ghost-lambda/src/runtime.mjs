@@ -20,6 +20,9 @@ import {
 import { findDatabaseInfoPaths, patchDatabaseInfoAt } from './database-info-patch.mjs';
 import { buildMailConfig } from './mail-config.mjs';
 
+// Ghost picks its config file by NODE_ENV (the Ghost image sets it; Lambda does not).
+process.env.NODE_ENV ??= 'production';
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 

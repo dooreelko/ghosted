@@ -258,6 +258,8 @@ resource "aws_lambda_function" "function" {
       CONTENT_BUCKET     = aws_s3_bucket.content[0].bucket
       GENERATE_QUEUE_URL = aws_sqs_queue.generate[0].url
       SCHEDULER_ROLE_ARN = aws_iam_role.scheduler[0].arn
+      # Ghost loads some ES modules with require(); Lambda's Node 22 needs the flag
+      NODE_OPTIONS = "--experimental-require-module"
       }, each.value.smtp ? {
       SMTP_PARAMETER_NAME = var.smtp_parameter_name
       MAIL_USER           = var.mail_user

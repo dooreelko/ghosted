@@ -538,6 +538,30 @@ Reading:
   the admin upload paths.
 - Needs rebuilding on the 6.73.0 release before any real deploy.
 
+### First real Lambda run: members-session (2026-10-30, arm64, 1024 MB)
+
+Deployed the shared zip (23 MB zipped, 87-121 MB unzipped) to the members
+function and called it through the HTTP API with the seeded production data.
+Site info, member (204) and session (204) answer correctly; the site title is
+the real one.
+
+| | Result |
+|---|---|
+| Cold start (init, billed) | 5.56 s, then 128 ms for the first request |
+| Warm request | 3-5 ms billed |
+| Peak memory | 340 MB (about 100 MB more than the local 240 MB: database restore buffers, S3 and SSM clients) |
+
+- The cold start is far above the local 1.4 s: Lambda gives 1024 MB roughly
+  0.6 of a vCPU, and the init also restores the 5.7 MB database from S3 and
+  reads the SMTP parameter. Not yet split into parts; the memory sweep and a
+  timing log inside init come next, together with the compile cache.
+- Three things only the real run showed: Lambda does not set `NODE_ENV` (Ghost
+  then finds no database config), its Node 22 refuses `require()` of an ES
+  module unless `--experimental-require-module` is set (now in the function
+  environment), and a host `node_modules` copied into the build container hid
+  the arm64 install (the build now removes it and checks every database
+  binary is present).
+
 ## Decided after the spike
 
 - **Classic Lambda for all functions** (including members-session, comments, admin: Express inside the function, behind one API Gateway HTTP API). Web functions are not used.

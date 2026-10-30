@@ -5,11 +5,12 @@ set -eu
 ARCH="${ARCH:-arm64}"
 echo "== lambda dependencies ($ARCH)"
 cp -r /src /tmp/work
+rm -rf /tmp/work/*/node_modules   # a host install (seed script) must not mask the target install
 for d in sqlite-s3 ghost-lambda; do
   cd /tmp/work/$d
   if [ "$ARCH" = arm64 ]; then
     npm_config_arch=arm64 npm_config_platform=linux npm_config_target_arch=arm64 npm_config_target_platform=linux \
-      npm install --omit=dev --no-audit --no-fund --os=linux --cpu=arm64 2>&1 | tail -1
+      npm install --omit=dev --no-audit --no-fund --os=linux --cpu=arm64 2>&1 | tail -4
   else
     npm install --omit=dev --no-audit --no-fund 2>&1 | tail -1
   fi
@@ -23,6 +24,7 @@ mkdir -p /tmp/lam /tmp/tr
 # the lambda test needs x64 natives under its own node_modules; the arm64 copy is not runnable here
 if [ "$ARCH" = arm64 ]; then
   cp -r /src /tmp/trace-work
+  rm -rf /tmp/trace-work/*/node_modules
   for d in sqlite-s3 ghost-lambda; do (cd /tmp/trace-work/$d && npm install --omit=dev --no-audit --no-fund 2>&1 | tail -1); done
   TRACE_WORK=/tmp/trace-work
 else
@@ -65,6 +67,11 @@ if [ "$ARCH" = arm64 ]; then
   find /out/root/node_modules -name better_sqlite3.node -exec cp /tmp/armg/node_modules/better-sqlite3/build/Release/better_sqlite3.node {} \;
   find /out/root/node_modules -name re2.node -exec cp /tmp/re2-arm64.node {} \;
 fi
+
+echo "== every better-sqlite3 in the package must carry its binary"
+for d in $(find /out/root -type f -name binding.gyp -path '*better-sqlite3/binding.gyp' -exec dirname {} \;); do
+  [ -f "$d/build/Release/better_sqlite3.node" ] || { echo "MISSING binary in $d" >&2; exit 1; }
+done
 
 echo "== native binaries in the package"
 node -e "
