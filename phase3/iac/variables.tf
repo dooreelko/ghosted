@@ -93,3 +93,9 @@ variable "smtp_parameter_name" {
   description = "Name of the parameter holding the SMTP credential (read by the email function). No default -- parameter names stay out of tracked files; supply it from the gitignored tfvars (see .local-secrets.md)."
   default     = ""
 }
+
+variable "mail_user" {
+  type        = string
+  description = "SMTP user and sender address for the functions that send mail. Supply it from the gitignored tfvars (see .local-secrets.md)."
+  default     = ""
+}

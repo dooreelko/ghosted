@@ -252,13 +252,16 @@ resource "aws_lambda_function" "function" {
   source_code_hash = data.archive_file.placeholder.output_base64sha256
 
   environment {
-    variables = {
+    variables = merge({
       GHOST_URL          = var.site_url
       STORE_BUCKET       = aws_s3_bucket.store[0].bucket
       CONTENT_BUCKET     = aws_s3_bucket.content[0].bucket
       GENERATE_QUEUE_URL = aws_sqs_queue.generate[0].url
       SCHEDULER_ROLE_ARN = aws_iam_role.scheduler[0].arn
-    }
+      }, each.value.smtp ? {
+      SMTP_PARAMETER_NAME = var.smtp_parameter_name
+      MAIL_USER           = var.mail_user
+    } : {})
   }
 
   depends_on = [aws_iam_role_policy.function, aws_cloudwatch_log_group.function]
