@@ -632,6 +632,33 @@ Memory sweep (members function, cold start each): 512 MB 5.4 s, 1024 MB 3.6-5.3 
 - The edge answer for anonymous member checks (see Edge) is what keeps visitors from
   waiting on this.
 
+### Read-path entries on Lambda (2026-10-30)
+
+Entries built and answering through the HTTP API with the seeded production data: members
+session, comments (the same members app, separate function), content API (valid key returns
+posts, wrong key 401), draft preview, unsubscribe, link redirect (tracked link redirects with
+attribution, unknown slug 404), webmentions, the image variant fallback (plain, no Ghost: sharp
+and a size list from Ghost's config and every shipped theme; missing original 404, unknown size
+redirects to the original) and the generator.
+
+- Generator (2048 MB): boots Ghost's frontend in-process and crawls it from the home page,
+  sitemaps, the feed and robots, following links to pages, pagination and theme assets (not the
+  dynamic prefixes), writes each response to the content bucket at its URL path, renders the 404
+  page, then removes only keys an earlier run created and this one did not (the key list is kept
+  in the bucket). The real blog: 108 objects in 9 s, 469 MB peak; all 44 sitemap URLs present;
+  the home page identical to the live one except the Ghost, portal and search script versions.
+- The trace that decides which Ghost files ship now runs against a dump of the real content and
+  the real themes (lazy requires inside theme helpers only show up there); every entry has a
+  local test that is part of the trace. Themes ship in the package and are copied to the writable
+  content path at start.
+- The link redirect is Ghost-backed (it records the click through Ghost's tracking service), so
+  it is 512 MB, not the plain 128 MB planned; Ghost-backed readers have a 30 s timeout since
+  their cold starts (6-9 s) sit near Lambda's 10 s init limit, after which the init simply
+  continues inside the first request.
+- Not done: image variants generated eagerly by the generator (the fallback function covers a
+  missing variant for now), the invalidation step (needs the distribution), the queue trigger
+  and schedules (flag), the background functions and the admin functions.
+
 ## Decided after the spike
 
 - **Classic Lambda for all functions** (including members-session, comments, admin: Express inside the function, behind one API Gateway HTTP API). Web functions are not used.

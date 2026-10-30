@@ -107,7 +107,7 @@ function useS3Dialect() {
 }
 
 // A service module's export, whether it is the module itself or its default.
-const svc = (p) => {
+export const svc = (p) => {
   const m = R(p);
   return m.default ?? m;
 };

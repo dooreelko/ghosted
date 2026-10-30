@@ -17,7 +17,7 @@ function installThemes() {
   fs.cpSync(shipped, path.join(contentPath, 'themes'), { recursive: true });
 }
 
-export async function createRenderApp(opts) {
+export async function createRenderApp({ api = false, ...opts } = {}) {
   const config = await configure(opts);
   installThemes();
   await initCore();
@@ -42,6 +42,8 @@ export async function createRenderApp(opts) {
   await svc('frontend/services/apps').init();
 
   const root = R('shared/express')('lambda');
+  // The content API (the admin one is only reached through its own functions' routes).
+  if (api) root.use(`${config.getSubdir()}/ghost/api`, R('server/web/api')());
   root.use(config.getSubdir(), parentApp);
   await markReady();
   mark('render_app_built');
