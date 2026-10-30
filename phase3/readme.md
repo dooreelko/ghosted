@@ -516,7 +516,7 @@ subset, the render subset and a full Ghost boot. Scripts in `spike/`.
 
 | | Installed tree | Pruned tree |
 |---|---|---|
-| Files | ~100,000 | 4,759 (plus 2,920 symlinks) |
+| Files | 29972 (deps plus core) | 4,759 (plus 2,920 symlinks) |
 | Size | 299 MB deps + 99 MB core | 27 MB of files, ~55 MB on disk, ~6 MB compressed |
 | Members subset | 213 MB RSS, all four requests correct | 215 MB RSS, identical loaded set, all four correct |
 | Render subset | 249 MB RSS | 249 MB RSS, home, feed, sitemap and 404 correct |
