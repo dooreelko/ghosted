@@ -12,11 +12,11 @@ locals {
   # content: "rw" read+write, "ro" read, "none".
   functions = {
     # Reader-facing
-    image-resize    = { memory = 1024, timeout = 30, concurrency = 2, store = "none", content = "rw", queue = false, smtp = false, description = "Size-variant fallback on a missing image" }
-    link-redirect   = { memory = 256, timeout = 10, concurrency = 2, store = "rw", content = "none", queue = false, smtp = false, description = "Newsletter click-tracking redirect" }
+    image-resize    = { memory = 512, timeout = 30, concurrency = 2, store = "none", content = "rw", queue = false, smtp = false, description = "Size-variant fallback on a missing image" }
+    link-redirect   = { memory = 128, timeout = 10, concurrency = 2, store = "rw", content = "none", queue = false, smtp = false, description = "Newsletter click-tracking redirect" }
     members-session = { memory = 1024, timeout = 15, concurrency = 5, store = "rw", content = "none", queue = false, smtp = false, description = "Members app: session, member, magic links" }
     comments        = { memory = 512, timeout = 15, concurrency = 3, store = "rw", content = "none", queue = false, smtp = false, description = "Comments router" }
-    webmentions     = { memory = 256, timeout = 10, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Webmention receiver" }
+    webmentions     = { memory = 512, timeout = 10, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Webmention receiver" }
     content-api     = { memory = 512, timeout = 15, concurrency = 2, store = "ro", content = "none", queue = false, smtp = false, description = "Content API (read-only)" }
     # Render
     generator = { memory = 2048, timeout = 600, concurrency = 2, store = "ro", content = "rw", content_delete = true, consumes_queue = true, queue = false, smtp = false, description = "Renders pages from a store snapshot, runs the image preflight" }
@@ -30,7 +30,7 @@ locals {
     scheduled-publish = { memory = 1024, timeout = 60, concurrency = 1, store = "rw", content = "none", queue = true, smtp = false, description = "Publishes a scheduled post when its one-shot schedule fires" }
     email-send        = { memory = 1024, timeout = 300, concurrency = 2, store = "rw", content = "ro", queue = false, smtp = true, description = "Newsletter send, with the image preflight" }
     maintenance       = { memory = 512, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Recurring cleanup jobs" }
-    sqlite-checkpoint = { memory = 1024, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Checkpoint, compaction and orphan sweep" }
+    sqlite-checkpoint = { memory = 256, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Checkpoint, compaction and orphan sweep" }
   }
 
   active_functions = { for name, f in local.functions : name => f if var.deploy_functions }
