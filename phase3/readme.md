@@ -718,6 +718,25 @@ redirects to the original) and the generator.
   exercised by the local admin test, which also feeds the trace, so the pruned tree carries
   what they load. The import job runs inside the request. The zip is now 45.9 MB; the direct
   upload limit is 50 MB, so the next growth needs the deploy script to go through S3.
+- Scheduled publish works end to end on Lambda. Ghost's scheduling adapter is replaced by an
+  EventBridge Scheduler one that turns a scheduled post into a one-shot schedule (named from
+  the callback path, so rescheduling updates it and unscheduling deletes it; a failing
+  callback is retried three times, not for a day). The schedule starts `scheduled-publish`,
+  which calls Ghost's own schedule endpoint with the signed URL Ghost handed the scheduler.
+  A test post scheduled three minutes out was published, its callback answered 200 and the
+  generator ran. Scheduler works to the minute, so the publish landed about a minute after the
+  set time. Loading Ghost's `post-scheduling` module is what attaches the scheduling
+  listeners, so the admin boot requires it.
+- The newsletter send is its own function. The admin functions that can publish dispatch
+  Ghost's send job to `email-send` as an asynchronous Lambda invocation (the function name is
+  in their environment); `email-send` runs the same boot and the job in place. The wiring is
+  in, but a real send is not tested: the Phase 3 store holds the real members, so a test
+  send needs a test newsletter or segment first. Note that a send job for an email that does
+  not exist takes about two minutes to fail (Ghost retries the status lock).
+- The pruned tree keeps all of Ghost's own code (about 14 MB, not only what traces loaded), so
+  a path no test took (a serializer, a controller) finds its sibling files; dependencies stay
+  traced. The zip is 48.3 MB and is now staged in a private deploy bucket for the update
+  (the direct upload limit is 50 MB); 103 MB unpacked against the 250 MB limit.
 - Not done: image variants generated eagerly by the generator (the fallback function covers a
   missing variant for now), the invalidation step (needs the distribution), the background
   functions and the admin functions.
