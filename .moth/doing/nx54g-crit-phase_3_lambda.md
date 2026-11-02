@@ -1,3 +1,6 @@
+ID: nx54g | Severity: crit | Status: doing
+Title: Phase 3 Lambda
+---
 phase 3 is about turning the ghost in a proper serverless solution that only runs on demand, only parts that it needs and costs as little as possible. given aws gives free 400k GB/seconds each month (1 mil invocations), the expected cost should be zero on lambda and negligible on s3 & co
 
 the approach is likely to decompose ghost's central express router into individual routes and map them to individual lambda functions. depending on the number we might group several routes together - admin, public, etc. we need to decide on the numbers. by default all functions share a max concurrent limit of 1000, so we should be below that prioritizing the content serving.
@@ -393,3 +396,18 @@ overrides at the CDN.**
   copies one small piece of Ghost's behavior, so it joins the post-cutover
   validation list. Rejected: a scheduled keep-warm ping (contradicts running
   only on demand), accepting the delay.
+
+
+- Background work inside a request (webmention verification, and later the
+  same shape for scheduled publish and newsletter sends): the function builds
+  Ghost's jobs service itself, registers only the handler it needs, tracks the
+  running job and waits for it before the function returns, because a Lambda
+  is frozen after its response. Rejected: leaving the job to run after the
+  response (never completes), a queue for webmentions (extra moving part for
+  a feature with no known use).
+- Functions whose role cannot write the store keep Ghost's incidental writes
+  local to the invocation instead of trying to ship them. Why: a render run
+  must not be able to change the store, and the failed ships were noise.
+- Recurring schedules are not used: the checkpoint and maintenance functions
+  are invoked by hand or by the write path, not on a timer. Accepted: store
+  compaction is then only as frequent as writes trigger it.

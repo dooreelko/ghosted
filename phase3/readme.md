@@ -679,14 +679,21 @@ redirects to the original) and the generator.
   invalidation step exists and stays off until the edge flag is on.
 - The checkpoint (plain, 256 MB) and the maintenance function (token and expired-comp cleanups,
   512 MB) run on Lambda; the gift jobs belong to the paid tier and are not deployed.
-- Webmentions do not work yet: receiving one dispatches a verification job to Ghost's jobs
-  service, which runs it after the response in the same process, and a Lambda is frozen once
-  it responds. Needs the job to be awaited or moved to a queue (the same question as the
-  scheduled-publish and newsletter jobs); a webmention today answers 500. Low priority: single
-  author, nothing shows the feature in use.
+- Webmentions work. Ghost runs a received webmention as a background job after the response, and
+  a Lambda is frozen once it responds. The function now builds the jobs service itself,
+  registers only the webmention handler, tracks the running job and waits for it inside the
+  store window before returning, so the result is written before the freeze. A test webmention
+  from a source that does not link back answered 202 and was rejected by the job (the two
+  Ghost-side oembed errors in the log are that rejection). Scheduled publish and newsletter
+  sends will use the same pattern or a queue.
+- Read-only store functions (content API, generator, preview) set `STORE_READ_ONLY`: the SQLite
+  client then never ships a write, so Ghost's incidental boot and render writes stay in the
+  invocation's local file instead of failing against a role that cannot write the store.
+- Recurring schedules stay off by decision (the maintenance and checkpoint functions can be
+  invoked by hand); the queue trigger for the generator was tested and works.
 - Not done: image variants generated eagerly by the generator (the fallback function covers a
-  missing variant for now), the invalidation step (needs the distribution), the queue trigger
-  and schedules (flag), the background functions and the admin functions.
+  missing variant for now), the invalidation step (needs the distribution), the background
+  functions and the admin functions.
 
 ## Decided after the spike
 
