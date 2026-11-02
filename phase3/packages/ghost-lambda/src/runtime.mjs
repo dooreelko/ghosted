@@ -151,6 +151,30 @@ export async function initMemberServices() {
   mark('member_services');
 }
 
+// Services the admin API reaches beyond the reader ones, in the order of the
+// bundled release's boot.js. The jobs service is the caller's (it decides which
+// job handlers this function runs).
+export async function initAdminServices({ jobsService }) {
+  await Promise.all([
+    svc('server/services/mentions').init({ jobsService }),
+    svc('server/services/staff').init(),
+    svc('server/services/indexnow-ping').init(),
+    svc('server/services/upgrades').init(),
+    svc('server/services/slack-ping').init(),
+    svc('server/services/email-service').init({ ghostServer: undefined, jobsService }),
+    svc('server/services/webhooks').listen(),
+    svc('server/services/link-tracking').init(),
+    svc('server/services/slack-notifications').init(),
+    svc('server/services/media-inliner').init(),
+    svc('server/services/content-import').init(),
+    svc('server/services/donations').init(),
+    svc('server/services/recommendations').init(),
+    svc('server/services/stats').init(),
+    svc('server/services/machine-payments').init(),
+  ]);
+  mark('admin_services');
+}
+
 // Call once initialization is done. Boot itself can write (Ghost fills in
 // settings defaults); those writes are ours, not another function's.
 export async function markReady() {

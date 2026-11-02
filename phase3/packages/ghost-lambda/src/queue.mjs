@@ -1,8 +1,11 @@
 // The generate queue: after a successful run, delete the requests that piled up.
-import { SQSClient, ReceiveMessageCommand, DeleteMessageBatchCommand } from '@aws-sdk/client-sqs';
+import { SQSClient, ReceiveMessageCommand, DeleteMessageBatchCommand, SendMessageCommand } from '@aws-sdk/client-sqs';
 
 export function createQueue({ url, client = new SQSClient({ region: process.env.AWS_REGION }) }) {
   return {
+    async send(body) {
+      await client.send(new SendMessageCommand({ QueueUrl: url, MessageBody: JSON.stringify(body) }));
+    },
     async drain() {
       let n = 0;
       for (;;) {
