@@ -127,3 +127,9 @@ variable "deploy_phase3_test_edge" {
     error_message = "deploy_phase3_test_edge requires deploy_functions and deploy_storage."
   }
 }
+
+variable "host_admin_client" {
+  type        = bool
+  default     = false
+  description = "The Phase 3 edge serves Ghost's built admin client from the content bucket (published by scripts/publish-admin-client.sh) instead of sending its paths to the container service. Publish the files first."
+}

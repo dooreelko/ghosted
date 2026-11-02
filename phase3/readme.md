@@ -388,8 +388,14 @@ origins and the image origin group, the 404 error response, and 15 behaviors in 
 images (bucket, falling over to the resizer on 403/404), link redirect, comment counts (cached
 by the origin's header, query only), member and session reads (edge function, cookie
 forwarded), members, webmentions, content API, admin API, preview, email, unsubscribe, gift,
-static pages (bucket, index function) and the bare base path. The admin client is not hosted by
-Phase 3 yet: while the container service exists its paths stay there.
+static pages (bucket, index function) and the bare base path. The admin client is static files
+(the built client in the Ghost image, no templating); `scripts/publish-admin-client.sh` puts them in the
+content bucket under the admin path (hashed assets cached a year, entry page not cached, source maps left
+out; the generator never touches that prefix). Flag `host_admin_client` drops the container-service
+route from the live flip so the static behavior serves it; the test distribution never had that route and
+serves the client already. Checked there: entry page, a hashed asset, slash redirect, site API.
+Not checked: signing in from a browser (needs the password). The comments moderation frame
+(`/ghost/auth-frame/`) is built by Ghost at runtime and is not published yet.
 
 - **Anonymous member checks (decided).** A CloudFront Function on the
   member and session read routes (the two Ghost answers with 204 for a visitor
