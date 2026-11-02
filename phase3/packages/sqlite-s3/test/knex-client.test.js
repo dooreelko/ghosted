@@ -9,7 +9,7 @@ import { createSegmentStore } from '../src/segments.js';
 import { createManifestStore } from '../src/manifest.js';
 import { createCheckpointPolicy } from '../src/checkpoint.js';
 import { createLeaseStore } from '../src/leases.js';
-import { SqliteS3Client, registerS3Config } from '../src/knex-client.js';
+import { SqliteS3Client, registerS3Config, shipCount } from '../src/knex-client.js';
 
 async function tmpDbPath() {
   const dir = await mkdtemp(path.join(tmpdir(), 'sqlite-s3-knex-test-'));
@@ -108,6 +108,28 @@ test('data written via one Knex instance is visible after a simulated restart', 
   assert.equal(rows.length, 1);
   assert.equal(rows[0].title, 'hello world');
   await knexB.destroy();
+});
+
+test('a read-only store keeps writes local: nothing is shipped and a restart does not see them', async () => {
+  const store = createInMemoryObjectStore();
+  const writer = makeKnex(await tmpDbPath(), makeS3Config(store));
+  await writer.schema.createTable('posts', (t) => {
+    t.increments('id');
+    t.string('title');
+  });
+  await writer('posts').insert({ title: 'kept' });
+  await writer.destroy();
+
+  const before = shipCount();
+  const reader = makeKnex(await tmpDbPath(), { ...makeS3Config(store), readOnly: true });
+  await reader('posts').insert({ title: 'local only' });
+  assert.equal((await reader('posts').select('*')).length, 2);
+  await reader.destroy();
+  assert.equal(shipCount(), before, 'no ship started');
+
+  const next = makeKnex(await tmpDbPath(), makeS3Config(store));
+  assert.deepEqual((await next('posts').select('title')).map((r) => r.title), ['kept']);
+  await next.destroy();
 });
 
 // Regression test for C1: after restoreLocalDb reconstructs a non-empty

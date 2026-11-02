@@ -70,6 +70,7 @@ export async function configure({ objectStore } = {}) {
     checkpointPolicy: createCheckpointPolicy({ maxWalBytes: Number.MAX_SAFE_INTEGER, maxIntervalMs: Number.MAX_SAFE_INTEGER }),
     leaseStore: createLeaseStore(objectStore),
     onRestoreComplete: ({ attempts, durationMs }) => mark('store_restore_ms', durationMs),
+    readOnly: process.env.STORE_READ_ONLY === '1',
   };
   registerS3Config(s3Config);
 

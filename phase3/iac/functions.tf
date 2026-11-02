@@ -272,7 +272,10 @@ resource "aws_lambda_function" "function" {
       SCHEDULER_ROLE_ARN = aws_iam_role.scheduler[0].arn
       # Ghost loads some ES modules with require(); the Lambda Node runtimes (22 and 24) reject that without the flag
       NODE_OPTIONS = "--experimental-require-module"
-      }, each.value.smtp ? {
+      }, each.value.store == "ro" ? {
+      # The role cannot write the store; Ghost's incidental writes stay in the local file instead of failing to ship
+      STORE_READ_ONLY = "1"
+      } : {}, each.value.smtp ? {
       SMTP_PARAMETER_NAME = var.smtp_parameter_name
       MAIL_USER           = var.mail_user
       } : {}, try(each.value.invalidates, false) ? {

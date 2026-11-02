@@ -281,6 +281,9 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // duplicate segments. Chaining behind `pendingShips` (below) closes
     // both: at most one ship per db path is ever actually in flight, and
     // every capture always sees a fully up-to-date state.lastWalOffset.
+    // A read-only store never ships: the write stays in the local file for this
+    // invocation and is dropped with it.
+    if (s3?.readOnly) return;
     shipsStarted += 1;
     const previousShip = pendingShips.get(dbPath) ?? Promise.resolve();
     const chained = previousShip.then(() => {
