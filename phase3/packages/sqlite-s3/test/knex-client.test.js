@@ -1082,6 +1082,19 @@ test('a second connection reuses the restored file while the manifest is unchang
   await knexB.raw('select 1');
   assert.equal((await knexB('widgets').select('*')).length, 2);
   assert.equal(calls.length, 3);
-  assert.notEqual(calls[2].reused, true);
+  // its own shipped write is the shared state, so nothing needs downloading again
+  assert.equal(calls[2].reused, true);
+
+  // another writer moves the shared state: restore for real
+  const knexC = makeKnex(await tmpDbPath(), makeS3Config(store));
+  await knexC.raw('select 1');
+  await knexC('widgets').insert({ name: 'third' });
+  await knexC.destroy();
+  await knexB.destroy();
+  knexB.initialize();
+  await knexB.raw('select 1');
+  assert.equal(calls.length, 4);
+  assert.notEqual(calls[3].reused, true);
+  assert.equal((await knexB('widgets').select('*')).length, 3);
   await knexB.destroy();
 });

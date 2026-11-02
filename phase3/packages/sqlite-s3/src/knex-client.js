@@ -445,6 +445,8 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // the next capture on this connection must treat it (and everything it
     // was appended onto) as the new known-synced baseline.
     state.baseline = { manifest: outcome.manifest, etag: outcome.etag };
+    // The local file now holds exactly what the shared history holds (a later write's capture clears this again).
+    restoredFrom.set(this.connectionSettings.filename, outcome.etag);
     connection.__sqliteS3State = state;
     s3.checkpointPolicy.recordSegment(payload.length);
 
