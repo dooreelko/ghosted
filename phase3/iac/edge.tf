@@ -227,6 +227,13 @@ resource "aws_cloudfront_distribution" "phase3_test" {
     cached_methods         = ["GET", "HEAD"]
     compress               = true
     cache_policy_id        = data.aws_cloudfront_cache_policy.caching_optimized.id
+
+    # Without this, "/" asks the bucket for its root and gets the key listing
+    # (the bucket policy allows ListBucket so missing keys answer 404).
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.index[0].arn
+    }
   }
 
   dynamic "ordered_cache_behavior" {
