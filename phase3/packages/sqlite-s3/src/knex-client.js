@@ -47,6 +47,10 @@ export function registerS3Config(s3Config) {
 // observe the outcome. This is also the serialization point for captures
 // (see _captureAndScheduleShip) -- every new capture chains behind whatever
 // is here, so at most one ship per db path is ever actually in flight.
+// dbPath -> manifest etag the local file was last restored from, kept only while
+// nothing wrote to it since: a new connection then reuses the file instead of
+// downloading the same state again (Ghost opens a second connection at boot).
+const restoredFrom = new Map();
 const pendingShips = new Map(); // dbPath -> promise, never rejects
 
 // Phase 3: a Lambda environment freezes the moment the response is returned,
@@ -189,14 +193,21 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // another connection. That's a narrow, accepted window (the read was
     // already running against a valid, consistent snapshot; it just won't
     // see this particular restore's effects), not a bug to fix here.
-    const restoreStats = await restoreLocalDb({
-      manifest,
-      manifestStore: this._s3.manifestStore,
-      segmentStore: this._s3.segmentStore,
-      leaseStore: this._s3.leaseStore,
-      dbPath: this.connectionSettings.filename,
-    });
-    bumpRestoreGeneration(this.connectionSettings.filename);
+    const localPath = this.connectionSettings.filename;
+    const unchanged = etag !== undefined && etag !== null && restoredFrom.get(localPath) === etag;
+    const restoreStats = unchanged
+      ? { attempts: 0, durationMs: 0, reused: true }
+      : await restoreLocalDb({
+          manifest,
+          manifestStore: this._s3.manifestStore,
+          segmentStore: this._s3.segmentStore,
+          leaseStore: this._s3.leaseStore,
+          dbPath: localPath,
+        });
+    if (!unchanged) {
+      bumpRestoreGeneration(localPath);
+      restoredFrom.set(localPath, etag);
+    }
     // Purely observational -- unlike every other s3 config field, this one
     // is allowed a silent no-default fallback (it cannot affect
     // correctness, only visibility), so callers that don't care about
@@ -283,12 +294,16 @@ export class SqliteS3Client extends BetterSQLite3Client {
     // every capture always sees a fully up-to-date state.lastWalOffset.
     // A read-only store never ships: the write stays in the local file for this
     // invocation and is dropped with it.
-    if (s3?.readOnly) return;
+    if (s3?.readOnly) {
+      try { if (statSync(`${dbPath}-wal`).size > 0) restoredFrom.delete(dbPath); } catch { /* no WAL: nothing was written */ }
+      return;
+    }
     shipsStarted += 1;
     const previousShip = pendingShips.get(dbPath) ?? Promise.resolve();
     const chained = previousShip.then(() => {
       const captured = this._captureWalDelta(connection, s3);
       if (!captured) return; // nothing new to ship (see _captureWalDelta's early returns)
+      restoredFrom.delete(dbPath); // a write: the local file now differs from the state it was restored from
       return this._shipCapturedDelta(connection, s3, captured);
     });
 

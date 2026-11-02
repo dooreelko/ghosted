@@ -1052,3 +1052,36 @@ test('a knex.destroy()+knex.initialize() cycle on the same instance (Ghost core\
     await knex.destroy();
   }
 });
+
+test('a second connection reuses the restored file while the manifest is unchanged and nothing was written', async () => {
+  const store = createInMemoryObjectStore();
+  const dbPathA = await tmpDbPath();
+  const knexA = makeKnex(dbPathA, makeS3Config(store));
+  await knexA.schema.createTable('widgets', (t) => { t.increments('id'); t.string('name'); });
+  await knexA('widgets').insert({ name: 'gizmo' });
+  await knexA.destroy();
+
+  const calls = [];
+  const s3Config = { ...makeS3Config(store), onRestoreComplete: (stats) => calls.push(stats) };
+  const dbPathB = await tmpDbPath();
+  const knexB = makeKnex(dbPathB, s3Config);
+  await knexB.raw('select 1'); // a raw statement goes to the writer pool, which restores
+  await knexB.destroy();
+  knexB.initialize();
+  await knexB.raw('select 1');
+  const rows = await knexB('widgets').select('*');
+  assert.equal(rows.length, 1);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].reused, undefined);
+  assert.equal(calls[1].reused, true);
+
+  // a write makes the next connection restore again
+  await knexB('widgets').insert({ name: 'second' });
+  await knexB.destroy();
+  knexB.initialize();
+  await knexB.raw('select 1');
+  assert.equal((await knexB('widgets').select('*')).length, 2);
+  assert.equal(calls.length, 3);
+  assert.notEqual(calls[2].reused, true);
+  await knexB.destroy();
+});
