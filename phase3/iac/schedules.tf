@@ -1,8 +1,7 @@
 # Triggers (flag: deploy_functions): the generate queue feeds the generator,
 # EventBridge Scheduler runs the recurring jobs and the one-shot publish
-# schedules the admin function creates at runtime. Recurring schedules stay
-# disabled until cutover (enable_schedules) so Phase 3's background jobs never
-# run next to Phase 2's in-process ones.
+# schedules the admin function creates at runtime. The recurring schedules work
+# on Phase 3's own store only, so they run (enable_schedules) next to Phase 2.
 
 resource "aws_lambda_event_source_mapping" "generate" {
   count = var.deploy_functions ? 1 : 0

@@ -286,8 +286,8 @@ nothing scheduled), so no final re-sync.
    Phase 2's seed and export tools. Secrets and the signing keys inside the
    database carry over, so member sessions, magic links and old newsletter
    tracking and unsubscribe links keep working.
-2. Deploy the functions, the API, the queue and the alarms, with background
-   schedules off. Run the generator to completion (idempotent, resumable).
+2. Deploy the functions, the API, the queue and the alarms, with the
+   recurring schedules on (they use Phase 3's own store). Run the generator to completion (idempotent, resumable).
 3. Validate before touching the distribution: crawl the live URL list
    (sitemap and feeds) and compare status, redirects and content with the
    new site; an old tracked link and an old unsubscribe link; a member
@@ -371,7 +371,7 @@ Stages and flags (all off or empty until turned on; the plan on the adopted
 state stays empty with them off): `deploy_storage` (two buckets, on),
 `deploy_functions` (queue, 16 functions with roles and log groups, one HTTP API
 with about 190 routes and per-route throttling, queue trigger, schedules,
-alarms), `enable_schedules` (recurring background jobs; off until cutover),
+alarms), `enable_schedules` (recurring background jobs; on by default),
 and the existing container flag. The distribution change comes last.
 The infrastructure code owns configuration; each function's code is a
 placeholder replaced by the deploy script, and changes to it are ignored.
@@ -689,8 +689,11 @@ redirects to the original) and the generator.
 - Read-only store functions (content API, generator, preview) set `STORE_READ_ONLY`: the SQLite
   client then never ships a write, so Ghost's incidental boot and render writes stay in the
   invocation's local file instead of failing against a role that cannot write the store.
-- Recurring schedules stay off by decision (the maintenance and checkpoint functions can be
-  invoked by hand); the queue trigger for the generator was tested and works.
+- Recurring schedules are on (checkpoint every 6 hours, maintenance daily). They only touch
+  Phase 3's own store, so they run next to Phase 2; an earlier "off until cutover" setting
+  existed to avoid clashing with Phase 2's in-process jobs, which does not apply to a separate
+  store. Both functions answered a manual invoke (checkpoint 3.2 s, maintenance clean); the
+  generator's queue trigger was tested and works.
 - Not done: image variants generated eagerly by the generator (the fallback function covers a
   missing variant for now), the invalidation step (needs the distribution), the background
   functions and the admin functions.

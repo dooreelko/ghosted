@@ -78,8 +78,8 @@ variable "deploy_functions" {
 
 variable "enable_schedules" {
   type        = bool
-  description = "Whether the recurring background schedules are enabled. Off until cutover so Phase 3's background jobs never run alongside Phase 2's in-process ones."
-  default     = false
+  description = "Whether the recurring background schedules (checkpoint, maintenance) are enabled. They only touch Phase 3's own store, so they can run next to Phase 2."
+  default     = true
 }
 
 variable "site_url" {
