@@ -9,8 +9,25 @@ const ghostRequire = createRequire(path.join(process.env.GHOST_ROOT, 'core', 'x.
 const jwt = ghostRequire('jsonwebtoken');
 const Database = ghostRequire('better-sqlite3');
 
+// A staff sign-in needs a known password: work on a copy of the database whose owner has one
+// (never logged in before, so Ghost skips the new-device email check).
+import fs from 'node:fs';
+import os from 'node:os';
+const SIGNIN_PASSWORD = 'Test-only-p4ssword!';
+const seedCopy = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'admin-seed-')), 'g.db');
+fs.copyFileSync(process.env.SEED_DB, seedCopy);
+const security = ghostRequire('@tryghost/security');
+const owner = (() => {
+  const db = new Database(seedCopy);
+  const u = db.prepare("select id, email from users where status = 'active' order by id limit 1").get();
+  db.prepare('update users set last_seen = null where id = ?').run(u.id);
+  return { db, ...u };
+})();
+owner.db.prepare('update users set password = ? where id = ?').run(await security.password.hash(SIGNIN_PASSWORD), owner.id);
+owner.db.close();
+
 const objectStore = createInMemoryObjectStore();
-await seedStoreFromSqliteFile({ dbPath: process.env.SEED_DB, manifestStore: createManifestStore(objectStore), segmentStore: createSegmentStore(objectStore) });
+await seedStoreFromSqliteFile({ dbPath: seedCopy, manifestStore: createManifestStore(objectStore), segmentStore: createSegmentStore(objectStore) });
 
 // An integration's admin key signs the token; the key lives in the seeded database.
 const key = new Database(process.env.SEED_DB, { readonly: true }).prepare("select id, secret from api_keys where type = 'admin' limit 1").get();
@@ -106,4 +123,23 @@ r = await call('GET', `/posts/${sp.id}/?fields=status`);
 ok(r.json.posts[0].status === 'published', 'scheduled post is published by the callback');
 ok(sent.length >= 1, `regeneration requested (${sent.length})`);
 console.log('queue messages', sent.length);
+
+// Staff sign-in (password check, session cookie), then a call that uses only the cookie.
+const rawCall = (method, p, headers, body) => handler({
+  version: '2.0', rawPath: `${base}/ghost/api/admin${p}`, rawQueryString: '',
+  headers: { host: 'example.test', 'x-forwarded-proto': 'http', 'content-type': 'application/json', origin: new URL(process.env.GHOST_URL).origin, ...headers },
+  requestContext: { http: { method, path: `${base}/ghost/api/admin${p}`, sourceIp: '127.0.0.1' } },
+  body: body ? JSON.stringify(body) : undefined, isBase64Encoded: false,
+}, {});
+const bad = await rawCall('POST', '/session/', {}, { username: owner.email, password: 'wrong' });
+console.log(`  ${bad.statusCode} wrong password`);
+ok(bad.statusCode === 422, 'wrong password is refused (422)');
+const login = await rawCall('POST', '/session/', {}, { username: owner.email, password: SIGNIN_PASSWORD });
+console.log(`  ${login.statusCode} sign-in ${String(login.body).slice(0, 200)}`);
+ok(login.statusCode === 201, 'staff sign-in');
+const cookie = (login.cookies ?? []).map((c) => c.split(';')[0]).join('; ') || String(login.headers?.['set-cookie'] ?? '').split(';')[0];
+ok(cookie.includes('ghost-admin-api-session'), 'session cookie set');
+const me = await rawCall('GET', '/users/me/', { cookie });
+console.log(`  ${me.statusCode} users/me with the session cookie`);
+ok(me.statusCode === 200, 'session cookie authenticates');
 process.exit(process.exitCode ?? 0);
