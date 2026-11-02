@@ -24,7 +24,7 @@ locals {
     # Admin
     admin-content  = { memory = 1024, timeout = 30, concurrency = 3, store = "rw", content = "none", queue = true, smtp = false, scheduler = true, invokes = ["email-send"], description = "Admin API: posts, pages, tags, schedules" }
     admin-audience = { memory = 1024, timeout = 30, concurrency = 2, store = "rw", content = "none", queue = true, smtp = false, invokes = ["email-send"], description = "Admin API: members, newsletters, comments moderation" }
-    admin-site     = { memory = 512, timeout = 30, concurrency = 2, store = "rw", content = "none", queue = true, smtp = true, description = "Admin API: auth, users, settings, themes" }
+    admin-site     = { memory = 512, timeout = 30, concurrency = 6, store = "rw", content = "none", queue = true, smtp = true, description = "Admin API: auth, users, settings, themes" }
     admin-heavy    = { memory = 2048, timeout = 300, concurrency = 1, store = "rw", content = "rw", queue = true, smtp = false, description = "Admin API: uploads, imports, exports" }
     # Background
     scheduled-publish = { memory = 1024, timeout = 60, concurrency = 1, store = "rw", content = "none", queue = true, smtp = false, invokes = ["email-send"], description = "Publishes a scheduled post when its one-shot schedule fires" }
