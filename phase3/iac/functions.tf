@@ -280,6 +280,9 @@ resource "aws_lambda_function" "function" {
       } : {}, each.value.store == "ro" ? {
       # The role cannot write the store; Ghost's incidental writes stay in the local file instead of failing to ship
       STORE_READ_ONLY = "1"
+      } : {}, var.admin_url_override != "" && startswith(each.key, "admin-") ? {
+      # Test only: Ghost accepts sign-ins from its admin URL's origin alone, so the test distribution needs it named
+      admin__url = var.admin_url_override
       } : {}, each.value.smtp ? {
       SMTP_PARAMETER_NAME = var.smtp_parameter_name
       MAIL_USER           = var.mail_user

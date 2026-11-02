@@ -133,3 +133,9 @@ variable "host_admin_client" {
   default     = false
   description = "The Phase 3 edge serves Ghost's built admin client from the content bucket (published by scripts/publish-admin-client.sh) instead of sending its paths to the container service. Publish the files first."
 }
+
+variable "admin_url_override" {
+  type        = string
+  default     = ""
+  description = "TEST ONLY: origin of the test distribution, given to the admin functions as Ghost's admin URL so staff can sign in there (Ghost refuses a sign-in from any other origin). Keep it empty for the live site, and clear it before the cutover: with it set, signing in from the real domain is refused. Set in the gitignored tfvars."
+}
