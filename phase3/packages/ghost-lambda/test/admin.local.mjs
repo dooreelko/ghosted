@@ -40,7 +40,7 @@ const base = new URL(process.env.GHOST_URL).pathname.replace(/\/$/, '');
 async function call(method, p, body, raw) {
   const res = await handler({
     version: '2.0', rawPath: `${base}/ghost/api/admin${p.split('?')[0]}`, rawQueryString: p.split('?')[1] ?? '',
-    headers: { host: 'example.test', 'x-forwarded-proto': 'http', authorization: `Ghost ${token()}`, 'content-type': raw ? raw.type : 'application/json', origin: 'http://example.test' },
+    headers: { host: 'example.test', 'x-forwarded-proto': 'http', 'x-ghost-version': '6.73', authorization: `Ghost ${token()}`, 'content-type': raw ? raw.type : 'application/json', origin: 'http://example.test' },
     requestContext: { http: { method, path: `${base}/ghost/api/admin${p}`, sourceIp: '127.0.0.1' } },
     body: raw ? raw.body.toString('base64') : body ? JSON.stringify(body) : undefined, isBase64Encoded: Boolean(raw),
   }, {});
@@ -127,7 +127,7 @@ console.log('queue messages', sent.length);
 // Staff sign-in (password check, session cookie), then a call that uses only the cookie.
 const rawCall = (method, p, headers, body) => handler({
   version: '2.0', rawPath: `${base}/ghost/api/admin${p}`, rawQueryString: '',
-  headers: { host: 'example.test', 'x-forwarded-proto': 'http', 'content-type': 'application/json', origin: new URL(process.env.GHOST_URL).origin, ...headers },
+  headers: { host: 'example.test', 'x-forwarded-proto': 'http', 'x-ghost-version': '6.73', 'content-type': 'application/json', origin: new URL(process.env.GHOST_URL).origin, ...headers },
   requestContext: { http: { method, path: `${base}/ghost/api/admin${p}`, sourceIp: '127.0.0.1' } },
   body: body ? JSON.stringify(body) : undefined, isBase64Encoded: false,
 }, {});

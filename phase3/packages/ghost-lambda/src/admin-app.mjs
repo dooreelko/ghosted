@@ -70,6 +70,8 @@ export async function createAdminHandler(opts = {}) {
     }
     next();
   });
+  // The admin client sends the version it was built for; Ghost's own parent app sets the locals the check reads.
+  outer.use(R('server/web/parent/middleware/ghost-locals').ghostLocals);
   outer.use(root);
 
   mark('admin_app_built');
