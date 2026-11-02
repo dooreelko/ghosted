@@ -694,6 +694,23 @@ redirects to the original) and the generator.
   existed to avoid clashing with Phase 2's in-process jobs, which does not apply to a separate
   store. Both functions answered a manual invoke (checkpoint 3.2 s, maintenance clean); the
   generator's queue trigger was tested and works.
+- Admin functions run one shared app: the render app's services plus the ones the admin API
+  reaches (staff, webhooks, mentions, email service, link tracking, recommendations, stats,
+  and so on, in the order of the release's boot), with the admin API mounted. API Gateway
+  decides which of the four functions a route reaches; the code is the same. Locally (full
+  tree, in the build container: `DEV_TEST=admin.local.mjs phase3/scripts/build-functions.sh x64 <image>`)
+  and on Lambda, reads of posts, tags, members, newsletters, tiers, users, settings and site
+  answered 200, and a draft was created, edited, read and deleted. On Lambda the call went
+  through the test edge and the gateway to `admin-content`; the writes queued generator runs
+  (two ran, 17 s each). A cold admin function takes about 7 s to answer its first call
+  (512 MB: init 6.8 s). Themes and integrations answer 403 to an integration key, which is
+  Ghost's rule (staff sessions only); the browser sign-in (session cookie behind the
+  distribution) is not tested yet.
+- A write that can change the site (posts, pages, tags, settings, themes, users, navigation
+  and theme settings, tiers, offers, newsletters, recommendations, redirects) sends one
+  message to the generate queue when it succeeds. Background jobs Ghost dispatches during a
+  request (webmention sending, the email job) are tracked and awaited before the function
+  returns; the email job moves to its own function in a later step.
 - Not done: image variants generated eagerly by the generator (the fallback function covers a
   missing variant for now), the invalidation step (needs the distribution), the background
   functions and the admin functions.
