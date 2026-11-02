@@ -40,6 +40,12 @@ export async function createAdminHandler(opts = {}) {
   jobs.handle(R('server/services/mentions/process-webmention-job').default, (job) => mentions.controller.processWebmention(job), { queue: 'webmentions', concurrency: 3 });
   jobs.handle(R('server/services/mentions/send-webmentions-job').default, (job) => mentions.sendingService.sendWebmentions(job), { queue: 'webmentions', concurrency: 3 });
   jobs.handle(R('server/services/email-service/jobs/send-email-job').default, (job) => svc('server/services/email-service').service.handleSendEmailJob(job), { queue: 'email', concurrency: 2 });
+  // Imports and the media inliner run in the request that starts them (the heavy function has the time).
+  jobs.handle(R('server/services/members/jobs/members-import-job').default, (job) => svc('server/services/members').handleImportJob(job));
+  jobs.handle(R('server/services/content-import/jobs/content-csv-import-job').default, (job) => svc('server/services/content-import').handleJob(job));
+  const siteImporter = R('server/data/importer').init({ jobsService });
+  jobs.handle(R('server/data/importer/jobs/content-import-job').default, (job) => siteImporter.executeImport(job));
+  jobs.handle(R('server/services/media-inliner/external-media-inliner-job').default, (job) => svc('server/services/media-inliner').getInstance().inline(job.domains));
   await jobsService.start();
 
   // A write that can change the site asks for a regeneration when it succeeds.

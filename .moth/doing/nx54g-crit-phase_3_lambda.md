@@ -411,3 +411,14 @@ overrides at the CDN.**
   without them store compaction depends on writes alone. Reversed an earlier
   hold-until-cutover setting.
 
+
+
+- Admin uploads (images, media, theme zip) go through the admin function and
+  Ghost's own upload routes, written to the content bucket by its storage
+  adapter. Accepted: a request over the Lambda payload cap (about 4.5 MB of
+  file after encoding) fails; photos for a single-author blog mostly fit.
+  Rejected for now: presigned direct-to-S3 uploads (needs a patch to the
+  built Ghost admin client that would have to be redone at every upgrade);
+  revisit only if a real upload hits the cap.
+- A successful admin write that can change the public site sends one request
+  to the generate queue; the generator coalesces bursts.

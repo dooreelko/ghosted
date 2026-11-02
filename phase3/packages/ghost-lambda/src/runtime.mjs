@@ -32,6 +32,11 @@ export const reportMarks = () => console.log(JSON.stringify({ initTiming: marks 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
+// Ghost loads sharp (image processing on upload) as an optional dependency of its own,
+// which the pruned tree does not carry; the function code's copy serves both.
+process.env.NODE_PATH = [path.resolve(here, '../node_modules'), process.env.NODE_PATH].filter(Boolean).join(path.delimiter);
+require('node:module').Module._initPaths();
+
 // The pruned Ghost tree sits one level above the function code in the zip.
 export const ghostRoot = process.env.GHOST_ROOT ?? path.resolve(here, '../..');
 export const R = (p) => require(path.join(ghostRoot, 'core', p));

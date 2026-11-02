@@ -20,17 +20,17 @@ const sent = [];
 const handler = await createAdminHandler({ objectStore, queue: { send: async (m) => sent.push(m) } });
 
 const base = new URL(process.env.GHOST_URL).pathname.replace(/\/$/, '');
-async function call(method, p, body) {
+async function call(method, p, body, raw) {
   const res = await handler({
     version: '2.0', rawPath: `${base}/ghost/api/admin${p.split('?')[0]}`, rawQueryString: p.split('?')[1] ?? '',
-    headers: { host: 'example.test', 'x-forwarded-proto': 'http', authorization: `Ghost ${token()}`, 'content-type': 'application/json', origin: 'http://example.test' },
+    headers: { host: 'example.test', 'x-forwarded-proto': 'http', authorization: `Ghost ${token()}`, 'content-type': raw ? raw.type : 'application/json', origin: 'http://example.test' },
     requestContext: { http: { method, path: `${base}/ghost/api/admin${p}`, sourceIp: '127.0.0.1' } },
-    body: body ? JSON.stringify(body) : undefined, isBase64Encoded: false,
+    body: raw ? raw.body.toString('base64') : body ? JSON.stringify(body) : undefined, isBase64Encoded: Boolean(raw),
   }, {});
   const text = res.isBase64Encoded ? Buffer.from(res.body, 'base64').toString() : res.body;
   let json; try { json = JSON.parse(text); } catch {}
   console.log(`  ${res.statusCode} ${method} ${p} ${json ? '' : String(text).slice(0, 100)}`);
-  return { status: res.statusCode, json };
+  return { status: res.statusCode, json, text };
 }
 
 const ok = (c, m) => { if (!c) { console.error('FAIL', m); process.exitCode = 1; } };
@@ -57,6 +57,30 @@ r = await call('PUT', `/posts/${post.id}/`, { posts: [{ status: 'published', upd
 ok(r.status === 200 && r.json.posts[0].status === 'published', 'publish');
 r = await call('DELETE', `/posts/${post.id}/`);
 ok(r.status === 204, 'delete post');
+
+// Multipart upload helper: the files and fields Ghost's upload endpoints take.
+function multipart(fields, file) {
+  const boundary = '----phase3test';
+  const parts = Object.entries(fields).map(([k, v]) => Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+  parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.field ?? 'file'}"; filename="${file.name}"\r\nContent-Type: ${file.type}\r\n\r\n`), file.data, Buffer.from(`\r\n--${boundary}--\r\n`));
+  return { type: `multipart/form-data; boundary=${boundary}`, body: Buffer.concat(parts) };
+}
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+r = await call('POST', '/images/upload/', null, multipart({ purpose: 'image', ref: 't.png' }, { name: 't.png', type: 'image/png', data: png }));
+ok(r.status === 201, 'image upload');
+r = await call('POST', '/files/upload/', null, multipart({}, { name: 't.txt', type: 'text/plain', data: Buffer.from('hello') }));
+ok(r.status === 201, 'file upload');
+r = await call('GET', '/members/upload/');
+ok(r.status === 200, 'members export');
+r = await call('GET', '/db/');
+ok(r.status === 403, 'db export is staff-only (an integration key is refused)');
+r = await call('GET', '/posts/export/');
+ok(r.status === 200, 'posts export');
+r = await call('POST', '/members/upload/', null, multipart({ 'mapping[email]': 'email' }, { field: 'membersfile', name: 'm.csv', type: 'text/csv', data: Buffer.from('email\nimport-test@example.invalid\n') }));
+if (r.status >= 400) console.log(r.text);
+ok(r.status === 201 || r.status === 200, 'members import');
+r = await call('GET', '/members/?filter=email:import-test@example.invalid');
+ok(r.json?.members?.length === 1, 'imported member exists (the import job ran inside the request)');
 ok(sent.length >= 1, `regeneration requested (${sent.length})`);
 console.log('queue messages', sent.length);
 process.exit(process.exitCode ?? 0);

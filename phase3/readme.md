@@ -711,6 +711,13 @@ redirects to the original) and the generator.
   message to the generate queue when it succeeds. Background jobs Ghost dispatches during a
   request (webmention sending, the email job) are tracked and awaited before the function
   returns; the email job moves to its own function in a later step.
+- Uploads go through the admin function (decided): an image uploaded to `admin-heavy` through
+  the test edge landed in the content bucket and was served by the edge. Ghost's own sharp is an
+  optional dependency the pruned tree does not carry, so the runtime puts the function code's
+  copy on the module path. The members CSV import, exports and the other upload endpoints are
+  exercised by the local admin test, which also feeds the trace, so the pruned tree carries
+  what they load. The import job runs inside the request. The zip is now 45.9 MB; the direct
+  upload limit is 50 MB, so the next growth needs the deploy script to go through S3.
 - Not done: image variants generated eagerly by the generator (the fallback function covers a
   missing variant for now), the invalidation step (needs the distribution), the background
   functions and the admin functions.
