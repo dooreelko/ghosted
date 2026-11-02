@@ -394,7 +394,20 @@ content bucket under the admin path (hashed assets cached a year, entry page not
 out; the generator never touches that prefix). Flag `host_admin_client` drops the container-service
 route from the live flip so the static behavior serves it; the test distribution never had that route and
 serves the client already. Checked there: entry page, a hashed asset, slash redirect, site API.
-Not checked: signing in from a browser (needs the password). The comments moderation frame
+Checked in a real browser on the test distribution (signed in as staff, dashboard and posts list load
+from the functions). What it took, for the cutover and for anyone repeating it:
+the password check library (`bcryptjs`) is loaded only at sign-in, so a trace test now signs in;
+a new-device sign-in emails a code, so `admin-site` has the mail config (the code goes to the staff user only);
+Ghost refuses a sign-in whose origin is not its admin URL, so the test distribution needs the admin URL
+named (`admin_url_override`, test only, gitignored tfvars; clear it before the cutover) and, with a separate
+admin URL, Ghost redirects any other host, so the handler presents that host to Ghost; the client's version
+header needs Ghost's standard response locals; the client fires four calls at load, so `admin-site` needs
+concurrency above 2 (now 6) and 2 GB (the cold boot of the admin app was 17-25 s at 512 MB and exceeded the
+10 s init limit). A permanent redirect answered during one bug was cached by the browser for those exact
+URLs: after such a bug, clear the site's cached files. The cold boot is still about 8-11 s when copies boot
+alone and 20+ s when four boot together (boot writes by sibling copies force each other to download the
+store again); a quiet copy is fast (0.2-0.4 s). Provisioned concurrency or no shipping of boot writes
+would fix it; neither is decided. The comments moderation frame
 (`/ghost/auth-frame/`) is built by Ghost at runtime and is not published yet.
 
 - **Anonymous member checks (decided).** A CloudFront Function on the
