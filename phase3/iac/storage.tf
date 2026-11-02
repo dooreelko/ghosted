@@ -40,3 +40,39 @@ resource "aws_s3_bucket_public_access_block" "store" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
+
+# Where the function zip is staged for a deploy: the direct upload limit (50 MB) is
+# smaller than the zip can grow. Private; old zips expire.
+resource "aws_s3_bucket" "deploy" {
+  count = var.deploy_functions ? 1 : 0
+
+  bucket = "ghost-phase3-deploy-${data.aws_caller_identity.current.account_id}"
+}
+
+resource "aws_s3_bucket_public_access_block" "deploy" {
+  count = var.deploy_functions ? 1 : 0
+
+  bucket = aws_s3_bucket.deploy[0].id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "deploy" {
+  count = var.deploy_functions ? 1 : 0
+
+  bucket = aws_s3_bucket.deploy[0].id
+
+  rule {
+    id     = "expire-old-zips"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = 14
+    }
+  }
+}

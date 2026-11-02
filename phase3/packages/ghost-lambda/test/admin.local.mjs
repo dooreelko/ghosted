@@ -81,6 +81,29 @@ if (r.status >= 400) console.log(r.text);
 ok(r.status === 201 || r.status === 200, 'members import');
 r = await call('GET', '/members/?filter=email:import-test@example.invalid');
 ok(r.json?.members?.length === 1, 'imported member exists (the import job ran inside the request)');
+
+// Every admin read endpoint: a lazily loaded module that the pruned tree lacks shows up as a 500 here.
+for (const g of ['/posts/', '/pages/', '/tags/', '/members/', '/members/stats/count/', '/labels/', '/tiers/', '/offers/', '/newsletters/', '/automations/', '/automated_emails/', '/emails/', '/comments/', '/feedback/', '/recommendations/', '/mentions/', '/links/', '/stats/', '/snippets/', '/webhooks/', '/integrations/', '/users/', '/roles/', '/invites/', '/themes/', '/custom_theme_settings/', '/settings/', '/config/', '/site/', '/slugs/post/test/', '/actions/', '/search-index/posts/', '/redirects/download/', '/oembed/?url=https://example.invalid/', '/schedules/', '/identities/', '/gifts/', '/gift_links/', '/stats/top-content/', '/stats/mrr/', '/exports/']) {
+  r = await call('GET', g);
+  ok(r.status < 500, `no server error for GET ${g}`);
+}
+
+// A scheduled post published through the callback a scheduler would fire.
+const { getSignedAdminToken } = ghostRequire(path.join(process.env.GHOST_ROOT, 'core/server/adapters/scheduling/utils'));
+const internalKeys = ghostRequire(path.join(process.env.GHOST_ROOT, 'core/server/services/internal-keys')).default.service;
+const urlUtils = ghostRequire(path.join(process.env.GHOST_ROOT, 'core/shared/url-utils')).default;
+r = await call('POST', '/posts/', { posts: [{ title: 'Scheduled local test', status: 'draft' }] });
+const sp = r.json.posts[0];
+const at = new Date(Date.now() + 5 * 60_000).toISOString();
+r = await call('PUT', `/posts/${sp.id}/`, { posts: [{ status: 'scheduled', published_at: at, updated_at: sp.updated_at }] });
+ok(r.status === 200 && r.json.posts[0].status === 'scheduled', 'schedule a post');
+const apiUrl = urlUtils.urlFor('api', { type: 'admin' }, true);
+const callbackUrl = `${apiUrl}schedules/posts/${sp.id}/?token=${getSignedAdminToken({ publishedAt: at, apiUrl, key: await internalKeys.get('ghost-scheduler') })}`;
+const cb = await handler.callback({ url: callbackUrl });
+console.log(`  ${cb.statusCode} scheduled callback ${String(cb.body).slice(0, 150)}`);
+ok(cb.statusCode === 200, 'scheduled callback');
+r = await call('GET', `/posts/${sp.id}/?fields=status`);
+ok(r.json.posts[0].status === 'published', 'scheduled post is published by the callback');
 ok(sent.length >= 1, `regeneration requested (${sent.length})`);
 console.log('queue messages', sent.length);
 process.exit(process.exitCode ?? 0);

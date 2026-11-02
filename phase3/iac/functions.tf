@@ -27,7 +27,7 @@ locals {
     admin-site     = { memory = 512, timeout = 30, concurrency = 2, store = "rw", content = "none", queue = true, smtp = false, description = "Admin API: auth, users, settings, themes" }
     admin-heavy    = { memory = 2048, timeout = 300, concurrency = 1, store = "rw", content = "rw", queue = true, smtp = false, description = "Admin API: uploads, imports, exports" }
     # Background
-    scheduled-publish = { memory = 1024, timeout = 60, concurrency = 1, store = "rw", content = "none", queue = true, smtp = false, description = "Publishes a scheduled post when its one-shot schedule fires" }
+    scheduled-publish = { memory = 1024, timeout = 60, concurrency = 1, store = "rw", content = "none", queue = true, smtp = false, invokes = ["email-send"], description = "Publishes a scheduled post when its one-shot schedule fires" }
     email-send        = { memory = 1024, timeout = 300, concurrency = 2, store = "rw", content = "ro", queue = false, smtp = true, description = "Newsletter send, with the image preflight" }
     maintenance       = { memory = 512, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Recurring cleanup jobs" }
     sqlite-checkpoint = { memory = 256, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Checkpoint, compaction and orphan sweep" }
@@ -272,7 +272,12 @@ resource "aws_lambda_function" "function" {
       SCHEDULER_ROLE_ARN = aws_iam_role.scheduler[0].arn
       # Ghost loads some ES modules with require(); the Lambda Node runtimes (22 and 24) reject that without the flag
       NODE_OPTIONS = "--experimental-require-module"
-      }, each.value.store == "ro" ? {
+      }, try(each.value.scheduler, false) ? {
+      # Scheduled posts become one-shot schedules that start this function
+      SCHEDULED_PUBLISH_FUNCTION = "ghost-phase3-scheduled-publish"
+      } : {}, contains(try(each.value.invokes, []), "email-send") ? {
+      EMAIL_SEND_FUNCTION = "ghost-phase3-email-send"
+      } : {}, each.value.store == "ro" ? {
       # The role cannot write the store; Ghost's incidental writes stay in the local file instead of failing to ship
       STORE_READ_ONLY = "1"
       } : {}, each.value.smtp ? {

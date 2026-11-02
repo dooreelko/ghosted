@@ -11,6 +11,16 @@ for (const t of traces) {
     // a directory that was listed outside node_modules (migrations, locales...): keep its direct files
     if (r !== ROOT && !r.includes('/node_modules/')) for (const e of fs.readdirSync(r, { withFileTypes: true })) if (e.isFile()) files.add(path.join(r, e.name)); } } catch {} }
 }
+// All of Ghost's own code, not only what the traces loaded: a code path no test took (a lazily
+// required serializer, a controller) must still find its sibling files. Dependencies stay traced.
+const keepAll = (d) => {
+  for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) { if (e.name !== 'node_modules') keepAll(p); }
+    else if (e.isFile() && !/\.(ts|map)$/.test(e.name) || e.isFile() && /\.json$/.test(e.name)) files.add(p);
+  }
+};
+for (const d of ['core/server', 'core/shared', 'core/frontend']) keepAll(path.join(ROOT, d));
 // package.json of every enclosing package
 for (const f of [...files]) {
   let d = path.dirname(f);

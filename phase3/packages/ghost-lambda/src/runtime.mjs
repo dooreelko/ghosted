@@ -89,6 +89,15 @@ export async function configure({ objectStore } = {}) {
   config.set('url', process.env.GHOST_URL);
   config.set('logging:transports', ['stdout']);
 
+  // Scheduled posts become one-shot EventBridge schedules (functions that create them set the target).
+  if (process.env.SCHEDULED_PUBLISH_FUNCTION) {
+    const adapterDir = path.join(contentPath, 'adapters', 'scheduling');
+    fs.mkdirSync(adapterDir, { recursive: true });
+    fs.copyFileSync(path.join(here, 'scheduling-eventbridge.cjs'), path.join(adapterDir, 'eventbridge.js'));
+    config.set('adapters:scheduling:active', 'eventbridge');
+    config.set('adapters:scheduling:eventbridge', {});
+  }
+
   if (process.env.SMTP_PARAMETER_NAME) {
     const ssm = new SSMClient({ region });
     const { Parameter } = await ssm.send(new GetParameterCommand({ Name: process.env.SMTP_PARAMETER_NAME, WithDecryption: true }));
@@ -160,6 +169,8 @@ export async function initMemberServices() {
 // bundled release's boot.js. The jobs service is the caller's (it decides which
 // job handlers this function runs).
 export async function initAdminServices({ jobsService }) {
+  // Loading it is what makes scheduled posts reach the scheduling adapter (it listens for the post events).
+  svc('server/services/post-scheduling');
   await Promise.all([
     svc('server/services/mentions').init({ jobsService }),
     svc('server/services/staff').init(),
