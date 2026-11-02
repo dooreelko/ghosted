@@ -8,6 +8,9 @@ export function toHandler(app, { after } = {}) {
   const http = serverlessHttp(app);
   return async (event, context) => {
     context.callbackWaitsForEmptyEventLoop = false;
+    // Test only (admin_url_override): with a separate admin URL Ghost redirects any request whose host is not
+    // that URL's host; behind the gateway the host is the gateway's, so present the admin host instead.
+    if (process.env.admin__url) event.headers = { ...event.headers, host: new URL(process.env.admin__url).host };
     return withStore(async () => {
       const response = await http(event, context);
       if (after) await after(response);
