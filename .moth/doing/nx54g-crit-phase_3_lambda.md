@@ -422,3 +422,17 @@ overrides at the CDN.**
   revisit only if a real upload hits the cap.
 - A successful admin write that can change the public site sends one request
   to the generate queue; the generator coalesces bursts.
+
+
+- The built admin client is static, so the edge serves it from the content
+  bucket like any other file (published by a script from the Ghost image);
+  no admin hosting service. Staff sign-in works on Phase 3 once the sign-in
+  mail path (new-device code to the staff user only) exists on the
+  authentication function.
+- Admin cold boot is slow (several seconds, longer when copies boot together)
+  and that is accepted; the requirement is that work after it (writing a
+  post) is fast. Rejected for now: provisioned concurrency, and skipping
+  boot-time writes.
+- A test-only admin URL override exists so staff can sign in on the test
+  distribution; it must be cleared before the cutover. Newsletter sending is
+  tested as part of publishing the blog post about this work, not before.
