@@ -66,6 +66,14 @@ export function shipCount() {
   return shipsStarted;
 }
 
+// Counts ships that failed (a lost optimistic-concurrency race, or an S3 error). The write
+// they carried is gone from the shared history, so a caller that must not lose a write
+// compares this before and after its work.
+let shipsFailed = 0;
+export function shipFailureCount() {
+  return shipsFailed;
+}
+
 export class SqliteS3Client extends BetterSQLite3Client {
   constructor(config) {
     // This package's commit-capture logic assumes exactly one physical
@@ -312,6 +320,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
       // now -- there is no request left to reject. Log and mark the
       // connection disposed (same recovery path this used to trigger
       // synchronously, pre-split) so the next acquire restores fresh.
+      shipsFailed += 1;
       console.error('sqlite-s3: async commit ship failed:', err.message);
       if (connection) connection.__knex__disposed = err;
       throw err; // re-thrown so connection.__sqliteS3PendingShip (below) still rejects for _reconcilingTransaction to observe

@@ -16,6 +16,7 @@ import {
   createLeaseStore,
   flushPendingShips,
   shipCount,
+  shipFailureCount,
 } from '@ghost-phase3/sqlite-s3';
 import { buildMailConfig } from './mail-config.mjs';
 
@@ -218,6 +219,16 @@ export async function ensureFresh() {
     await R('server/services/settings/settings-service').init();
   }
   knownEtag = etag;
+}
+
+export { shipFailureCount };
+
+// Forget what this environment knows of the store: the next withStore reconnects and
+// restores from it. Used after a write was lost, when the local file holds a state that
+// never reached the shared history.
+export function invalidateFresh() {
+  lastCheck = 0;
+  knownEtag = null;
 }
 
 // Wraps one invocation: freshness check before, durable commit after. A write's

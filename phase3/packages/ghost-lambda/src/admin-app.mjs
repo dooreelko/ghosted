@@ -76,12 +76,17 @@ export async function createAdminHandler(opts = {}) {
 
   mark('admin_app_built');
   reportMarks();
+  let changed = false;
   const handler = toHandler(outer, {
     after: async (response) => {
       await jobs.settled();
-      const changed = siteChanged && response.statusCode < 400;
+      changed = siteChanged && response.statusCode < 400;
       siteChanged = false;
+    },
+    // The generator reads the store: ask it to render only once the write is in it.
+    afterCommit: async () => {
       if (changed && generateQueue) await generateQueue.send({ reason: 'admin-write' });
+      changed = false;
     },
   });
 

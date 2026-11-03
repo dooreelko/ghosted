@@ -436,3 +436,23 @@ overrides at the CDN.**
 - A test-only admin URL override exists so staff can sign in on the test
   distribution; it must be cleared before the cutover. Newsletter sending is
   tested as part of publishing the blog post about this work, not before.
+
+
+- Durable writes: a mutating admin or member request is not answered until
+  its write is in the shared store. The store ships a write with a
+  compare-and-swap; a write that loses to another copy's ship used to be
+  dropped after the response had gone out (the user saw success, the change
+  vanished). Now the handler waits for the ship and, on a lost race, discards
+  the local state and replays the request against the fresh store with
+  jittered backoff, bounded attempts, then a 503 so the client sees the
+  failure. Messages to functions that read the store (the generate request)
+  are sent only after the write is durable. Why: found by the smoke gate;
+  cold boots of several admin copies at once make the race likely, and every
+  write path (post save, sessions) was exposed. Accepted: one store commit of
+  extra latency per write; side effects of a lost attempt can run twice (the
+  generate request is idempotent; a one-shot schedule created twice is to be
+  checked). Rejected: a save queue or an isolated post-save function (the
+  admin client waits for the saved post, and other functions still write the
+  same store), provisioned concurrency or tighter caps (narrow the window,
+  do not close it). Still open: boot-time writes still race and log noise;
+  the gate treats init-phase failures as warnings once that is decided.
