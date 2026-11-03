@@ -287,7 +287,11 @@ nothing scheduled), so no final re-sync.
    database carry over, so member sessions, magic links and old newsletter
    tracking and unsubscribe links keep working.
 2. Deploy the functions, the API, the queue and the alarms, with the
-   recurring schedules on (they use Phase 3's own store). Run the generator to completion (idempotent, resumable).
+   recurring schedules on (they use Phase 3's own store). Then migrate the
+   store once, explicitly: invoke the maintenance function with
+   `{"migrate": true}` (every function refuses to start on an unmigrated
+   store and never migrates on boot; the same step follows every Ghost
+   version upgrade). Run the generator to completion (idempotent, resumable).
 3. Validate before touching the distribution: crawl the live URL list
    (sitemap and feeds) and compare status, redirects and content with the
    new site; an old tracked link and an old unsubscribe link; a member
@@ -328,7 +332,7 @@ post that publishes itself (about 3 minutes). It never sends a newsletter and ne
 keys and the edge address come from environment variables. The gate waits for
 metrics to settle, then fails on: any alarm in ALARM now or during the window, API 5xx,
 Lambda errors or throttles in any function, a non-empty dead-letter queue, and timeouts or lost store
-writes in the function logs. Cold boots that exceed the 10 s init limit only warn. Not
+writes in the function logs. Cold boots that exceed the 10 s init limit only warn; a lost write is replayed by the request handler, so a ship failure in the logs should not appear. Not
 covered, by design: signing in (needs the password and the emailed code) and sending a
 newsletter (the store holds real members); those stay manual.
 

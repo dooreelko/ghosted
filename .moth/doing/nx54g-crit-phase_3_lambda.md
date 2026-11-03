@@ -476,3 +476,9 @@ overrides at the CDN.**
   (any writing request, including a GET that records something) is the only
   recovery. Rejected: keeping the page-level merge for throughput (this is a
   single-author blog; correctness over write rate).
+
+
+- Reader concurrency caps are a cost and blast-radius guard, not measured
+  limits. The newsletter click redirect is never cached (the click is the
+  write) and a send makes subscribers click together, so its cap was raised
+  to 10; the others stay until real traffic says otherwise.
