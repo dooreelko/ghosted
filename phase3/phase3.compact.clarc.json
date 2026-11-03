@@ -1,6 +1,6 @@
 {
   "title": "Phase 3: serverless Ghost (compact, per function group)",
-  "description": "Same system as phase3, one node per function group: reader-facing (6), render (2), admin (4), background (4). The API also routes the preview function in the render group (edge left out to keep the layout readable). The deploy bucket (the code zip the functions are updated from) is shown without links: it takes no part at runtime",
+  "description": "Serverless Ghost on AWS. CloudFront serves the site from a content bucket and sends dynamic paths to an HTTP API that fronts the Lambda functions. Functions read and write a SQLite database kept in an S3 bucket. Posts are rendered to static pages by a queue-driven generator (failed messages go to a dead-letter queue); EventBridge Scheduler runs the recurring and one-shot background jobs. Newsletters are sent through Mailgun, staff sign-in mail through an SMTP provider, and credentials are read from Parameter Store. CloudWatch alarms notify an email topic. A deploy bucket holds the code the functions are updated from.",
   "groups": [
     {
       "id": "aws",
@@ -340,8 +340,7 @@
       "sameRow": "admin"
     },
     "smtp": {
-      "rightOf": "data",
-      "sameRow": "data"
+      "sameCol": "mailgun"
     },
     "ssm": {
       "above": "bg",
