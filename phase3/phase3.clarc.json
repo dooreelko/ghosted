@@ -553,13 +553,13 @@
       "sameCol": "queue"
     },
     "content": {
+      "below": "store",
+      "sameCol": "store"
+    },
+    "store": {
       "rightOf": "admin-heavy",
       "sameRow": "admin-content",
       "sameCol": "preview"
-    },
-    "store": {
-      "below": "content",
-      "sameCol": "content"
     },
     "alarms": {
       "below": "members-session",

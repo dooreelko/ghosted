@@ -328,13 +328,13 @@
       "sameRow": "bg"
     },
     "content": {
+      "below": "data",
+      "sameCol": "data"
+    },
+    "data": {
       "rightOf": "admin",
       "sameRow": "admin",
       "sameCol": "gen"
-    },
-    "data": {
-      "below": "content",
-      "sameCol": "content"
     },
     "smtp": {
       "above": "bg",
