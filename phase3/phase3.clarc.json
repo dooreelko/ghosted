@@ -8,11 +8,6 @@
       "service": "aws-cloud"
     },
     {
-      "id": "external",
-      "label": "External services",
-      "service": "group"
-    },
-    {
       "id": "reader",
       "label": "Reader-facing",
       "service": "group",
@@ -106,8 +101,7 @@
     {
       "id": "smtp",
       "label": "SMTP provider",
-      "service": "traditional_server",
-      "group": "external"
+      "service": "traditional_server"
     },
     {
       "id": "image-resize",
@@ -208,8 +202,7 @@
     {
       "id": "mailgun",
       "label": "Mailgun (newsletter delivery, credentials in the store settings)",
-      "service": "traditional_server",
-      "group": "external"
+      "service": "traditional_server"
     }
   ],
   "edges": [
