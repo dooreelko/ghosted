@@ -229,3 +229,12 @@ test('gives up after 10 attempts if every retry keeps conflicting', async () => 
     /max retries/
   );
 });
+
+test('without rebase, a lost race is a required retry even when the pages are disjoint', async () => {
+  const { manifestStore, segmentStore } = setup();
+  const strict = createCommitter({ manifestStore, segmentStore, rebase: false, sleep: async () => {} });
+  await strict.commitWalDelta(Buffer.from('a'), [{ pageNumber: 1, dbSizeAfterCommit: 1 }], PAGE_SIZE, EMPTY_BASELINE);
+  const result = await strict.commitWalDelta(Buffer.from('b'), [{ pageNumber: 2, dbSizeAfterCommit: 2 }], PAGE_SIZE, EMPTY_BASELINE);
+  assert.deepEqual(result, { retryTransaction: true });
+  assert.equal((await manifestStore.read()).manifest.walSegmentIds.length, 1);
+});

@@ -7,7 +7,12 @@ export function fullJitterDelay(attempt, baseMs = 50, capMs = 2000) {
   return Math.random() * exp;
 }
 
-export function createCommitter({ manifestStore, segmentStore, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+// `rebase: false` makes every lost compare-and-swap a required retry, even when the other
+// writer's pages are disjoint. Disjoint pages are not enough to prove the two transactions
+// independent: the caller's local file lacks the other writer's segments, so what it read
+// (and any page it writes later) may be stale; a caller that can replay the whole unit of
+// work (a request) wants that.
+export function createCommitter({ manifestStore, segmentStore, rebase = true, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   return {
     // `baseline` is the {manifest, etag} the caller's LOCAL db was actually
     // built from (its last restore, or its own previous successful commit)
@@ -36,6 +41,7 @@ export function createCommitter({ manifestStore, segmentStore, sleep = (ms) => n
         } catch (err) {
           if (err.name !== 'ManifestConflictError') throw err;
 
+          if (!rebase) return { retryTransaction: true };
           const priorWalIds = manifest ? manifest.walSegmentIds : [];
           const priorBaseSegmentId = manifest ? manifest.baseSegmentId : null;
           const latestManifest = err.current.manifest;

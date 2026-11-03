@@ -59,7 +59,7 @@ if [ -n "${DEV_TEST:-}" ]; then
   cd $TRACE_WORK/ghost-lambda && exec node test/$DEV_TEST
 fi
 export NODE_OPTIONS="-r /build/trace-loads.js"
-for t in members-session.local.mjs write-path.local.mjs generator.local.mjs readers.local.mjs link-webmention.local.mjs webmentions.local.mjs maintenance.local.mjs admin.local.mjs durable-write.local.mjs; do
+for t in members-session.local.mjs write-path.local.mjs generator.local.mjs readers.local.mjs link-webmention.local.mjs webmentions.local.mjs maintenance.local.mjs admin.local.mjs durable-write.local.mjs migrate-on-request.local.mjs; do
   (cd $TRACE_WORK/ghost-lambda && TRACE_OUT=/tmp/tr/$t-%p.json node test/$t > /tmp/trace-$t.log 2>&1) || { echo "trace run failed: $t" >&2; tail -20 /tmp/trace-$t.log >&2; exit 1; }
   tail -3 /tmp/trace-$t.log
 done

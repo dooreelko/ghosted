@@ -75,6 +75,9 @@ export async function configure({ objectStore } = {}) {
     // of its own (a fire-and-forget checkpoint would be frozen mid-way).
     checkpointPolicy: createCheckpointPolicy({ maxWalBytes: Number.MAX_SAFE_INTEGER, maxIntervalMs: Number.MAX_SAFE_INTEGER }),
     leaseStore: createLeaseStore(objectStore),
+    // A lost race is replayed by the request handler (express-handler.mjs), never merged:
+    // a merge over disjoint pages can still carry a stale read or overwrite a page.
+    rebase: false,
     onRestoreComplete: ({ attempts, durationMs }) => mark('store_restore_ms', durationMs),
     readOnly: process.env.STORE_READ_ONLY === '1',
   };
@@ -130,10 +133,34 @@ export const svc = (p) => {
 
 // Ghost services every Ghost-backed function needs: the order and the
 // selection follow core/boot.js of the bundled release (6.73).
-export async function initCore() {
+// Ghost's own readiness step (knex-migrator) rebuilds the migrations table and takes the lock on
+// every boot, which is a write: each cold copy would ship it and race the others. A function
+// therefore only checks, read-only, that the store is migrated and refuses to start if not;
+// migrations run only when asked for (the maintenance function, `{ "migrate": true }`).
+export async function assertMigrated() {
+  const knex = R('server/data/db').knex;
+  const root = path.join(ghostRoot, 'core/server/data/migrations');
+  const lock = await knex('migrations_lock').where({ lock_key: 'km01' });
+  if (!lock.length || lock[0].locked) throw new Error('database migration lock is held or missing: a migration is running or was interrupted');
+  const have = new Map((await knex('migrations').select('version').count('version', { as: 'c' }).groupBy('version')).map((r) => [r.version, Number(r.c)]));
+  const files = (d) => fs.readdirSync(d).filter((f) => !f.startsWith('.'));
+  const expected = [['init', files(path.join(root, 'init')).length]];
+  for (const v of files(path.join(root, 'versions'))) {
+    const m = v.match(/([\d._]+)/);
+    if (m) expected.push([m[0], files(path.join(root, 'versions', v)).length]);
+  }
+  const missing = expected.filter(([v, n]) => n > (have.get(v) ?? 0)).map(([v, n]) => `${v}: ${have.get(v) ?? 0} of ${n}`);
+  if (missing.length) throw new Error(`database needs migration (${missing.join(', ')}): invoke the maintenance function with {"migrate": true} first`);
+}
+
+export async function initCore({ migrate = false } = {}) {
   const config = R('shared/config');
-  const DSM = R('server/data/db/database-state-manager');
-  await new DSM({ knexMigratorFilePath: config.get('paths:appRoot') }).makeReady();
+  if (migrate) {
+    const DSM = R('server/data/db/database-state-manager');
+    await new DSM({ knexMigratorFilePath: config.get('paths:appRoot') }).makeReady();
+  } else {
+    await assertMigrated();
+  }
   mark('database_ready');
   await R('server/data/db/info').init();
   svc('server/services/adapter-manager').init();

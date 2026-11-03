@@ -417,6 +417,7 @@ export class SqliteS3Client extends BetterSQLite3Client {
     const committer = createCommitter({
       manifestStore: s3.manifestStore,
       segmentStore: s3.segmentStore,
+      rebase: s3.rebase !== false,
     });
     const outcome = await committer.commitWalDelta(payload, frames, pageSize, state.baseline);
 

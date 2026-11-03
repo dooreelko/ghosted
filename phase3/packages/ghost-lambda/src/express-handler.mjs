@@ -2,7 +2,6 @@
 import serverlessHttp from 'serverless-http';
 import { withStore, shipFailureCount, invalidateFresh } from './runtime.mjs';
 
-const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const MAX_ATTEMPTS = Number(process.env.WRITE_ATTEMPTS ?? 5);
 const backoff = (attempt) => new Promise((r) => setTimeout(r, Math.random() * Math.min(1000, 50 * 2 ** attempt)));
 
@@ -11,7 +10,7 @@ const backoff = (attempt) => new Promise((r) => setTimeout(r, Math.random() * Ma
 // `afterCommit(response)` runs once the request's writes are durable in the store (a message
 // to another function that reads the store belongs here, not in `after`).
 //
-// A mutating request is not answered until its write is in the shared history. The store
+// A request that wrote (any method: a GET can record a click or a session) is not answered until its write is in the shared history. The store
 // ships a write with a compare-and-swap; when another copy shipped first the write is lost
 // (the local file is discarded). The request is then replayed against the fresh state, so the
 // caller either sees a durable success or an error, never a success that later vanishes.
@@ -25,7 +24,6 @@ export function toHandler(app, { after, afterCommit } = {}) {
     // that URL's host; behind the gateway the host is the gateway's, so present the admin host instead.
     if (process.env.admin__url) event.headers = { ...event.headers, host: new URL(process.env.admin__url).host };
     const method = (event.requestContext?.http?.method ?? 'GET').toUpperCase();
-    const durable = MUTATING.has(method);
     for (let attempt = 1; ; attempt += 1) {
       const failuresBefore = shipFailureCount();
       const response = await withStore(async () => {
@@ -33,7 +31,7 @@ export function toHandler(app, { after, afterCommit } = {}) {
         if (after) await after(res);
         return res;
       });
-      if (shipFailureCount() === failuresBefore || !durable) {
+      if (shipFailureCount() === failuresBefore) {
         if (afterCommit) await withStore(() => afterCommit(response));
         return response;
       }

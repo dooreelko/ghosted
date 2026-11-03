@@ -28,7 +28,7 @@ console.log('seeded');
 let prev = '/tmp/lam-boot-seed.db'; fs.copyFileSync(process.env.SEED_DB, prev);
 for (const n of ['first', 'second']) {
   console.log('booting', n); const w0 = await wal();
-  const r = spawnSync('node', [new URL(import.meta.url).pathname, 'boot', n], { env: process.env, stdio: ['ignore', 'ignore', 'inherit'] });
+  const r = spawnSync('node', [new URL(import.meta.url).pathname, 'boot', n], { env: n === 'second' ? { ...process.env, DEBUG: 'knex:query' } : process.env, stdio: ['ignore', 'ignore', 'inherit'] });
   if (r.status) process.exit(r.status);
   const cur = `/tmp/lam-boot-${n}.db`; await dump(cur);
   console.log(`${n} boot: ${await wal() - w0} WAL segment(s) shipped`);
@@ -37,6 +37,7 @@ for (const n of ['first', 'second']) {
     const ra = new Set(rows(a, t)); const diff = rows(b, t).filter((x) => !ra.has(x));
     if (diff.length) console.log(`  ${t}: ${diff.length} row(s) differ`, diff.slice(0, 2).map((x) => x.slice(0, 120)));
   }
+  if (n === 'second') { const shipped = await wal() - w0; if (shipped !== 0) { console.error(`FAIL: a boot on a complete store shipped ${shipped} segment(s)`); process.exit(1); } }
   prev = cur;
 }
 process.exit(0);
