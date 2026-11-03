@@ -313,6 +313,25 @@ local backend configuration and cached state are deleted so it cannot be
 applied by accident. Rollback after the container is removed runs from the
 Phase 3 code, which keeps the Lightsail flag.
 
+### Smoke suite and CloudWatch gate
+
+`scripts/run-smoke.sh` is the automated check to run before the flip against the
+test distribution (a rehearsal) and again through the live domain after it. It runs the
+suite (`scripts/smoke/smoke.test.mjs`, plain `node:test`, no dependencies) and then
+the gate (`scripts/smoke/cloudwatch-gate.mjs`) for the same time window; it exits
+non-zero if either fails. The suite covers: home page, sitemap, RSS, slash redirect, 404
+page, bare root, an image and its size variant, anonymous member and session answers,
+content API with a wrong and the right key, the admin client files, admin API without
+and with an integration key (reads, a burst of parallel calls like the admin client makes at
+load, a draft created, edited and deleted), and, with `SMOKE_SCHEDULED=1`, a scheduled
+post that publishes itself (about 3 minutes). It never sends a newsletter and never prints a key;
+keys and the edge address come from environment variables. The gate waits for
+metrics to settle, then fails on: any alarm in ALARM now or during the window, API 5xx,
+Lambda errors or throttles in any function, a non-empty dead-letter queue, and timeouts or lost store
+writes in the function logs. Cold boots that exceed the 10 s init limit only warn. Not
+covered, by design: signing in (needs the password and the emailed code) and sending a
+newsletter (the store holds real members); those stay manual.
+
 ## Cost comparison (estimate from measured traffic)
 
 Phase 2 baseline: about $12-13 a month, of which $10 is the container service
