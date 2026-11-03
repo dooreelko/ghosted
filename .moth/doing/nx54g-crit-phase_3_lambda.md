@@ -482,3 +482,16 @@ overrides at the CDN.**
   limits. The newsletter click redirect is never cached (the click is the
   write) and a send makes subscribers click together, so its cap was raised
   to 10; the others stay until real traffic says otherwise.
+
+
+- Newsletter sending, found by practising with a one-person segment (a label
+  on a test member, publish as email only to that segment): Ghost's bulk send
+  goes through Mailgun, configured by the settings that came with the
+  database, not through the SMTP credential (which only carries sign-in and
+  magic-link mail). The send function must be asked to run only after the
+  publish request's write is durable, and must never trust its own warm
+  snapshot, because it reads the email row written moments earlier by another
+  function; both were wrong and made sends hang until the function timed out
+  (a timed-out send stays "submitting" and Ghost only retries "failed"). The
+  practice is the rehearsal for the real send with the blog post; the real
+  send to all members stays the owner's explicit go.

@@ -45,10 +45,13 @@ export async function createAdminHandler(opts = {}) {
   const SendEmailJob = R('server/services/email-service/jobs/send-email-job').default;
   const sendInPlace = (job) => svc('server/services/email-service').service.handleSendEmailJob(job);
   const sendFunction = process.env.EMAIL_SEND_FUNCTION;
+  let pendingSends = [];
   const lambda = sendFunction ? (opts.lambda ?? new LambdaClient({ region: process.env.AWS_REGION })) : null;
   jobs.handle(
     SendEmailJob,
-    sendFunction ? (job) => lambda.send(new InvokeCommand({ FunctionName: sendFunction, InvocationType: 'Event', Payload: JSON.stringify({ job }) })) : sendInPlace,
+    // The send function reads the email row this request just wrote: start it only once the write is
+    // durable in the store (afterCommit below), never from inside the request.
+    sendFunction ? (job) => { pendingSends.push(job); } : sendInPlace,
     { queue: 'email', concurrency: 2 },
   );
   // Imports and the media inliner run in the request that starts them (the heavy function has the time).
@@ -87,7 +90,12 @@ export async function createAdminHandler(opts = {}) {
     afterCommit: async () => {
       if (changed && generateQueue) await generateQueue.send({ reason: 'admin-write' });
       changed = false;
+      const sends = pendingSends;
+      pendingSends = [];
+      for (const job of sends) await lambda.send(new InvokeCommand({ FunctionName: sendFunction, InvocationType: 'Event', Payload: JSON.stringify({ job }) }));
     },
+    // The attempt's write was lost and the request is replayed: what it queued refers to rows that never existed.
+    onLost: () => { pendingSends = []; changed = false; },
   });
 
   // Entry points for the functions that do one thing with this boot.
