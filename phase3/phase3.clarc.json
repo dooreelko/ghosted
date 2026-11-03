@@ -459,6 +459,115 @@
   "hints": {
     "viewer": {
       "start": true
+    },
+    "cdn": {
+      "rightOf": "viewer",
+      "sameRow": "viewer"
+    },
+    "apigw": {
+      "rightOf": "cdn",
+      "sameRow": "cdn"
+    },
+    "admin-content": {
+      "rightOf": "apigw",
+      "sameRow": "apigw"
+    },
+    "admin-heavy": {
+      "rightOf": "admin-content",
+      "sameRow": "admin-content"
+    },
+    "admin-audience": {
+      "below": "admin-content",
+      "sameCol": "admin-content"
+    },
+    "admin-site": {
+      "below": "admin-audience",
+      "sameCol": "admin-content"
+    },
+    "image-resize": {
+      "below": "admin-site",
+      "sameCol": "admin-content"
+    },
+    "link-redirect": {
+      "below": "image-resize",
+      "sameCol": "admin-content"
+    },
+    "members-session": {
+      "below": "link-redirect",
+      "sameCol": "admin-content"
+    },
+    "comments": {
+      "rightOf": "image-resize",
+      "sameRow": "image-resize"
+    },
+    "webmentions": {
+      "rightOf": "link-redirect",
+      "sameRow": "link-redirect"
+    },
+    "content-api": {
+      "rightOf": "members-session",
+      "sameRow": "members-session"
+    },
+    "scheduled-publish": {
+      "above": "admin-content",
+      "sameCol": "admin-content"
+    },
+    "scheduler": {
+      "leftOf": "scheduled-publish",
+      "sameRow": "scheduled-publish"
+    },
+    "email-send": {
+      "rightOf": "scheduled-publish",
+      "sameRow": "scheduled-publish"
+    },
+    "queue": {
+      "rightOf": "email-send",
+      "sameRow": "scheduled-publish"
+    },
+    "generator": {
+      "rightOf": "queue",
+      "sameRow": "scheduled-publish"
+    },
+    "preview": {
+      "rightOf": "generator",
+      "sameRow": "scheduled-publish"
+    },
+    "maintenance": {
+      "above": "scheduled-publish",
+      "sameCol": "scheduled-publish"
+    },
+    "sqlite-checkpoint": {
+      "above": "email-send",
+      "sameCol": "email-send"
+    },
+    "smtp": {
+      "rightOf": "sqlite-checkpoint",
+      "sameRow": "sqlite-checkpoint"
+    },
+    "ssm": {
+      "rightOf": "smtp",
+      "sameRow": "smtp"
+    },
+    "dlq": {
+      "above": "queue",
+      "sameCol": "queue"
+    },
+    "content": {
+      "rightOf": "admin-heavy",
+      "sameRow": "admin-content",
+      "sameCol": "preview"
+    },
+    "store": {
+      "below": "content",
+      "sameCol": "content"
+    },
+    "alarms": {
+      "below": "members-session",
+      "sameCol": "admin-content"
+    },
+    "sns": {
+      "rightOf": "alarms",
+      "sameRow": "alarms"
     }
   }
 }

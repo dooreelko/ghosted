@@ -295,39 +295,70 @@
     "viewer": {
       "start": true
     },
-    "content": {
-      "rightOf": "cdn",
-      "sameCol": "data"
-    },
-    "readers": {
-      "rightOf": "cdn"
-    },
-    "admin": {
-      "below": "readers"
-    },
-    "data": {
-      "rightOf": "gen",
-      "below": "content"
-    },
-    "bg": {
-      "below": "admin"
-    },
-    "gen": {
-      "sameRow": "bg",
-      "rightOf": "bg",
-      "above": "smtp"
-    },
-    "smtp": {
-      "below": "gen",
-      "sameCol": "gen"
+    "cdn": {
+      "rightOf": "viewer",
+      "sameRow": "viewer"
     },
     "apigw": {
-      "leftOf": "admin",
-      "sameRow": "admin"
+      "rightOf": "cdn",
+      "sameRow": "cdn"
+    },
+    "admin": {
+      "rightOf": "apigw",
+      "sameRow": "apigw"
+    },
+    "readers": {
+      "below": "admin",
+      "sameCol": "admin"
+    },
+    "bg": {
+      "above": "admin",
+      "sameCol": "admin"
+    },
+    "events": {
+      "leftOf": "bg",
+      "sameRow": "bg"
     },
     "queue": {
-      "leftOf": "gen",
-      "sameRow": "gen"
+      "rightOf": "bg",
+      "sameRow": "bg"
+    },
+    "gen": {
+      "rightOf": "queue",
+      "sameRow": "bg"
+    },
+    "content": {
+      "rightOf": "admin",
+      "sameRow": "admin",
+      "sameCol": "gen"
+    },
+    "data": {
+      "below": "content",
+      "sameCol": "content"
+    },
+    "smtp": {
+      "above": "bg",
+      "sameCol": "bg"
+    },
+    "ssm": {
+      "rightOf": "smtp",
+      "sameRow": "smtp"
+    },
+    "dlq": {
+      "above": "queue",
+      "sameCol": "queue"
+    },
+    "cw": {
+      "below": "readers",
+      "sameCol": "readers"
+    },
+    "sns": {
+      "leftOf": "cw",
+      "sameRow": "cw"
+    },
+    "deploy": {
+      "leftOf": "sns",
+      "sameRow": "cw"
     }
   },
   "joinPorts": "all"
