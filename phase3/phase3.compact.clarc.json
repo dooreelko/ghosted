@@ -1,6 +1,6 @@
 {
   "title": "Phase 3: serverless Ghost (compact, per function group)",
-  "description": "Same system as phase3, one node per function group: reader-facing (6), render (2), admin (4), background (4). The API also routes the preview function in the render group (edge left out to keep the layout readable). The deploy bucket only holds the code zip the functions are updated from",
+  "description": "Same system as phase3, one node per function group: reader-facing (6), render (2), admin (4), background (4). The API also routes the preview function in the render group (edge left out to keep the layout readable). The deploy bucket (the code zip the functions are updated from) is shown without links: it takes no part at runtime",
   "groups": [
     {
       "id": "aws",
@@ -301,26 +301,6 @@
       "to": "ssm",
       "label": "SMTP credential",
       "kind": "nf"
-    },
-    {
-      "from": "deploy",
-      "to": "readers",
-      "kind": "nf"
-    },
-    {
-      "from": "deploy",
-      "to": "admin",
-      "kind": "nf"
-    },
-    {
-      "from": "deploy",
-      "to": "gen",
-      "kind": "nf"
-    },
-    {
-      "from": "deploy",
-      "to": "bg",
-      "kind": "nf"
     }
   ],
   "hints": {
@@ -344,8 +324,7 @@
       "sameCol": "admin"
     },
     "bg": {
-      "above": "admin",
-      "sameCol": "admin"
+      "above": "admin"
     },
     "events": {
       "leftOf": "bg",
@@ -365,8 +344,7 @@
     },
     "data": {
       "rightOf": "admin",
-      "sameRow": "admin",
-      "sameCol": "gen"
+      "sameRow": "admin"
     },
     "smtp": {
       "rightOf": "data",
@@ -377,24 +355,19 @@
       "sameCol": "bg"
     },
     "dlq": {
-      "above": "queue",
-      "sameCol": "queue"
+      "above": "queue"
     },
     "cw": {
-      "below": "readers",
-      "sameCol": "readers"
+      "below": "readers"
     },
     "sns": {
-      "leftOf": "cw",
-      "sameRow": "cw"
+      "rightOf": "cw"
     },
     "deploy": {
-      "leftOf": "sns",
-      "sameRow": "cw"
+      "below": "content"
     },
     "mailgun": {
-      "above": "smtp",
-      "sameCol": "smtp"
+      "rightOf": "dlq"
     }
   },
   "joinPorts": "all"

@@ -601,8 +601,8 @@
       "sameRow": "alarms"
     },
     "mailgun": {
-      "above": "smtp",
-      "sameCol": "smtp"
+      "rightOf": "dlq",
+      "sameRow": "dlq"
     }
   }
 }
