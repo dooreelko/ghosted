@@ -3,24 +3,38 @@
   "description": "Same system as phase3, one node per function group: reader-facing (6), render (2), admin (4), background (4). The API also routes the preview function in the render group (edge left out to keep the layout readable). The deploy bucket only holds the code zip the functions are updated from",
   "groups": [
     {
+      "id": "aws",
+      "label": "AWS",
+      "service": "aws-cloud"
+    },
+    {
+      "id": "external",
+      "label": "External services",
+      "service": "group"
+    },
+    {
       "id": "g_readers",
       "label": "6 reader-facing functions",
-      "service": "group"
+      "service": "group",
+      "group": "aws"
     },
     {
       "id": "g_admin",
       "label": "4 admin functions",
-      "service": "group"
+      "service": "group",
+      "group": "aws"
     },
     {
       "id": "g_gen",
       "label": "2 render functions",
-      "service": "group"
+      "service": "group",
+      "group": "aws"
     },
     {
       "id": "g_bg",
       "label": "4 background functions",
-      "service": "group"
+      "service": "group",
+      "group": "aws"
     }
   ],
   "nodes": [
@@ -32,17 +46,20 @@
     {
       "id": "cdn",
       "label": "CloudFront (path behaviors, index function, anonymous member check, 404 page)",
-      "service": "cloudfront"
+      "service": "cloudfront",
+      "group": "aws"
     },
     {
       "id": "content",
       "label": "Content bucket (HTML, images, admin client)",
-      "service": "s3"
+      "service": "s3",
+      "group": "aws"
     },
     {
       "id": "apigw",
       "label": "API Gateway HTTP API (routes, throttling)",
-      "service": "api_gateway"
+      "service": "api_gateway",
+      "group": "aws"
     },
     {
       "id": "readers",
@@ -71,47 +88,62 @@
     {
       "id": "events",
       "label": "EventBridge Scheduler (recurring + one-shot)",
-      "service": "eventbridge"
+      "service": "eventbridge",
+      "group": "aws"
     },
     {
       "id": "data",
       "label": "SQLite store bucket",
-      "service": "s3"
+      "service": "s3",
+      "group": "aws"
     },
     {
       "id": "smtp",
       "label": "SMTP provider",
-      "service": "traditional_server"
+      "service": "traditional_server",
+      "group": "external"
     },
     {
       "id": "ssm",
       "label": "Parameter Store (secrets)",
-      "service": "parameter_store"
+      "service": "parameter_store",
+      "group": "aws"
     },
     {
       "id": "cw",
       "label": "CloudWatch (access logs, alarms)",
-      "service": "cloudwatch_2"
+      "service": "cloudwatch_2",
+      "group": "aws"
     },
     {
       "id": "queue",
       "label": "Generate queue (+ dead-letter)",
-      "service": "sqs"
+      "service": "sqs",
+      "group": "aws"
     },
     {
       "id": "dlq",
       "label": "Dead-letter queue",
-      "service": "sqs"
+      "service": "sqs",
+      "group": "aws"
     },
     {
       "id": "sns",
       "label": "Alarm topic (email)",
-      "service": "sns"
+      "service": "sns",
+      "group": "aws"
     },
     {
       "id": "deploy",
       "label": "Deploy bucket (code zip)",
-      "service": "s3"
+      "service": "s3",
+      "group": "aws"
+    },
+    {
+      "id": "mailgun",
+      "label": "Mailgun (newsletter delivery, credentials in the store settings)",
+      "service": "traditional_server",
+      "group": "external"
     }
   ],
   "edges": [
@@ -167,8 +199,8 @@
     },
     {
       "from": "bg",
-      "to": "smtp",
-      "label": "SMTP"
+      "to": "mailgun",
+      "label": "newsletter send (HTTPS API)"
     },
     {
       "from": "readers",
@@ -337,12 +369,12 @@
       "sameCol": "gen"
     },
     "smtp": {
-      "above": "bg",
-      "sameCol": "bg"
+      "rightOf": "data",
+      "sameRow": "data"
     },
     "ssm": {
-      "rightOf": "smtp",
-      "sameRow": "smtp"
+      "above": "bg",
+      "sameCol": "bg"
     },
     "dlq": {
       "above": "queue",
@@ -359,6 +391,10 @@
     "deploy": {
       "leftOf": "sns",
       "sameRow": "cw"
+    },
+    "mailgun": {
+      "above": "smtp",
+      "sameCol": "smtp"
     }
   },
   "joinPorts": "all"

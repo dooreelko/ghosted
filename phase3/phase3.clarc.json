@@ -3,24 +3,38 @@
   "description": "Every function separate, in groups, with the access its role grants; the API fronts the routed ones, the queue feeds the generator, the scheduler runs the background jobs",
   "groups": [
     {
+      "id": "aws",
+      "label": "AWS",
+      "service": "aws-cloud"
+    },
+    {
+      "id": "external",
+      "label": "External services",
+      "service": "group"
+    },
+    {
       "id": "reader",
       "label": "Reader-facing",
-      "service": "group"
+      "service": "group",
+      "group": "aws"
     },
     {
       "id": "render",
       "label": "Render",
-      "service": "group"
+      "service": "group",
+      "group": "aws"
     },
     {
       "id": "admin",
       "label": "Admin",
-      "service": "group"
+      "service": "group",
+      "group": "aws"
     },
     {
       "id": "bg",
       "label": "Background",
-      "service": "group"
+      "service": "group",
+      "group": "aws"
     }
   ],
   "nodes": [
@@ -32,57 +46,68 @@
     {
       "id": "cdn",
       "label": "CloudFront (behaviors, index function, anonymous member check, 404 page)",
-      "service": "cloudfront"
+      "service": "cloudfront",
+      "group": "aws"
     },
     {
       "id": "apigw",
       "label": "API Gateway HTTP API (routes, throttling)",
-      "service": "api_gateway"
+      "service": "api_gateway",
+      "group": "aws"
     },
     {
       "id": "content",
       "label": "Content bucket (pages, images, admin client)",
-      "service": "s3"
+      "service": "s3",
+      "group": "aws"
     },
     {
       "id": "store",
       "label": "Store bucket (SQLite store)",
-      "service": "s3"
+      "service": "s3",
+      "group": "aws"
     },
     {
       "id": "queue",
       "label": "Generate queue",
-      "service": "sqs"
+      "service": "sqs",
+      "group": "aws"
     },
     {
       "id": "dlq",
       "label": "Dead-letter queue",
-      "service": "sqs"
+      "service": "sqs",
+      "group": "aws"
     },
     {
       "id": "scheduler",
       "label": "EventBridge Scheduler (recurring + one-shot)",
-      "service": "eventbridge"
+      "service": "eventbridge",
+      "group": "aws"
     },
     {
       "id": "alarms",
       "label": "CloudWatch alarms",
-      "service": "cloudwatch_2"
+      "service": "cloudwatch_2",
+      "group": "aws"
     },
     {
       "id": "sns",
       "label": "Alarm topic (email)",
-      "service": "sns"
+      "service": "sns",
+      "group": "aws"
     },
     {
       "id": "ssm",
       "label": "Parameter Store (SMTP credential)",
-      "service": "parameter_store"
+      "service": "parameter_store",
+      "group": "aws"
     },
     {
       "id": "smtp",
       "label": "SMTP provider",
-      "service": "traditional_server"
+      "service": "traditional_server",
+      "group": "external"
     },
     {
       "id": "image-resize",
@@ -179,6 +204,12 @@
       "label": "sqlite-checkpoint",
       "service": "lambda",
       "group": "bg"
+    },
+    {
+      "id": "mailgun",
+      "label": "Mailgun (newsletter delivery, credentials in the store settings)",
+      "service": "traditional_server",
+      "group": "external"
     }
   ],
   "edges": [
@@ -408,8 +439,8 @@
     },
     {
       "from": "email-send",
-      "to": "smtp",
-      "label": "SMTP"
+      "to": "mailgun",
+      "label": "newsletter send (HTTPS API)"
     },
     {
       "from": "email-send",
@@ -541,12 +572,12 @@
       "sameCol": "email-send"
     },
     "smtp": {
-      "rightOf": "sqlite-checkpoint",
-      "sameRow": "sqlite-checkpoint"
+      "rightOf": "store",
+      "sameRow": "store"
     },
     "ssm": {
-      "rightOf": "smtp",
-      "sameRow": "smtp"
+      "rightOf": "sqlite-checkpoint",
+      "sameRow": "sqlite-checkpoint"
     },
     "dlq": {
       "above": "queue",
@@ -568,6 +599,10 @@
     "sns": {
       "rightOf": "alarms",
       "sameRow": "alarms"
+    },
+    "mailgun": {
+      "above": "smtp",
+      "sameCol": "smtp"
     }
   }
 }
