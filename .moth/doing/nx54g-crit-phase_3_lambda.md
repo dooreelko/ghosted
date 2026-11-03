@@ -495,3 +495,14 @@ overrides at the CDN.**
   (a timed-out send stays "submitting" and Ghost only retries "failed"). The
   practice is the rehearsal for the real send with the blog post; the real
   send to all members stays the owner's explicit go.
+
+
+- The edge's anonymous-member shortcut (empty 204 for a member read without
+  the session cookie) must not swallow requests that identify a member by a
+  uuid in the query: the unsubscribe and newsletter-preference links in an
+  email carry uuid and key and no cookie, so the shortcut left the
+  unsubscribe page without data. Found by clicking the links of a practice
+  send. Those requests now go to the members function; a smoke test covers
+  it. Also learned: links in a mail point at the site URL, so before the
+  flip they resolve against Phase 2; test them with the host swapped to the
+  test distribution.

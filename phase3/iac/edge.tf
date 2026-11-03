@@ -112,6 +112,9 @@ resource "aws_cloudfront_function" "index" {
 
 # A visitor without Ghost's members session cookie is anonymous, and Ghost
 # answers that with an empty 204; answer it here so no function boots for it.
+# Except a request that identifies a member by the uuid in its query (the
+# unsubscribe and newsletter-preference links in an email carry uuid and key
+# and no cookie): that one goes to the function.
 resource "aws_cloudfront_function" "anonymous_member" {
   count = local.edge_shared ? 1 : 0
 
@@ -121,7 +124,7 @@ resource "aws_cloudfront_function" "anonymous_member" {
   code    = <<-JS
     function handler(event) {
       var r = event.request;
-      if (r.method === 'GET' && !(r.cookies && r.cookies['ghost-members-ssr'])) {
+      if (r.method === 'GET' && !(r.cookies && r.cookies['ghost-members-ssr']) && !(r.querystring && r.querystring.uuid)) {
         return { statusCode: 204, statusDescription: 'No Content', headers: { 'cache-control': { value: 'private, no-store' } } };
       }
       return r;

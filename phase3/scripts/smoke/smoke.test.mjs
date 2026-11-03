@@ -84,6 +84,11 @@ describe('members and content API (functions behind the gateway)', () => {
   test('anonymous member and session reads answer 204 at the edge', T, async () => {
     for (const p of ['member', 'session']) assert.equal((await get(`${P}/members/api/${p}/`)).status, 204, p);
   });
+  test('a member identified by uuid in the query (unsubscribe links) reaches the function, not the anonymous shortcut', T, async () => {
+    const r = await get(`${P}/members/api/member/newsletters/?uuid=00000000-0000-0000-0000-000000000000&key=smoke`);
+    assert.notEqual(r.status, 204, 'the edge answered 204 for a request carrying a member uuid');
+    assert.ok(r.status >= 400 && r.status < 500, `unknown uuid is refused by Ghost (got ${r.status})`);
+  });
   test('content API refuses a wrong key', T, async () => {
     assert.equal((await get(`${P}/ghost/api/content/posts/?key=smoke-wrong`)).status, 401);
   });
