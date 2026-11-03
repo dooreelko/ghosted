@@ -456,3 +456,23 @@ overrides at the CDN.**
   same store), provisioned concurrency or tighter caps (narrow the window,
   do not close it). Still open: boot-time writes still race and log noise;
   the gate treats init-phase failures as warnings once that is decided.
+
+
+- Boot does not write the store (reverses "rejected for now: skipping
+  boot-time writes"). Ghost's own readiness step rebuilds the migrations
+  table and takes the migration lock on every boot, so every cold copy shipped
+  a no-op write and the copies raced each other. A function now only checks,
+  read-only, that the store is migrated and refuses to start if not (a clear
+  error, not a half-working site). Migrations run only when asked for: the
+  maintenance function boots on an unmigrated store and migrates on an
+  explicit request. Consequence for the cutover protocol and every Ghost
+  upgrade: deploy, run the migration request once, then traffic. A brand-new
+  store still writes its first-boot defaults once.
+- A lost compare-and-swap is never merged, even when the other writer's pages
+  are disjoint. Why: the merged commit rests on a local file that lacks the
+  other writer's data, so what the request read may be stale and a later page
+  write can overwrite the other writer's page; a durable-write test lost one
+  acknowledged save in about one run in five before this. The request replay
+  (any writing request, including a GET that records something) is the only
+  recovery. Rejected: keeping the page-level merge for throughput (this is a
+  single-author blog; correctness over write rate).
