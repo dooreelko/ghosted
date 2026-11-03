@@ -1,6 +1,6 @@
 {
   "title": "Phase 3: serverless Ghost (compact, per function group)",
-  "description": "Same system as phase3, one node per function group: reader-facing (6), render (2), admin (4), background (4). The API also routes the preview function in the render group (edge left out to keep the layout readable)",
+  "description": "Same system as phase3, one node per function group: reader-facing (6), render (2), admin (4), background (4). The API also routes the preview function in the render group (edge left out to keep the layout readable). The deploy bucket only holds the code zip the functions are updated from",
   "groups": [
     {
       "id": "g_readers",
@@ -36,7 +36,7 @@
     },
     {
       "id": "content",
-      "label": "Content bucket (HTML, images)",
+      "label": "Content bucket (HTML, images, admin client)",
       "service": "s3"
     },
     {
@@ -107,6 +107,11 @@
       "id": "sns",
       "label": "Alarm topic (email)",
       "service": "sns"
+    },
+    {
+      "id": "deploy",
+      "label": "Deploy bucket (code zip)",
+      "service": "s3"
     }
   ],
   "edges": [
@@ -118,7 +123,7 @@
     {
       "from": "cdn",
       "to": "content",
-      "label": "default: static pages, images"
+      "label": "default: static pages, images, admin client"
     },
     {
       "from": "cdn",
@@ -252,6 +257,37 @@
       "from": "cw",
       "to": "sns",
       "label": "notify",
+      "kind": "nf"
+    },
+    {
+      "from": "admin",
+      "to": "smtp",
+      "label": "sign-in code"
+    },
+    {
+      "from": "admin",
+      "to": "ssm",
+      "label": "SMTP credential",
+      "kind": "nf"
+    },
+    {
+      "from": "deploy",
+      "to": "readers",
+      "kind": "nf"
+    },
+    {
+      "from": "deploy",
+      "to": "admin",
+      "kind": "nf"
+    },
+    {
+      "from": "deploy",
+      "to": "gen",
+      "kind": "nf"
+    },
+    {
+      "from": "deploy",
+      "to": "bg",
       "kind": "nf"
     }
   ],

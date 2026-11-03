@@ -41,7 +41,7 @@
     },
     {
       "id": "content",
-      "label": "Content bucket (pages, images)",
+      "label": "Content bucket (pages, images, admin client)",
       "service": "s3"
     },
     {
@@ -190,7 +190,7 @@
     {
       "from": "cdn",
       "to": "content",
-      "label": "pages, images"
+      "label": "pages, images, admin client"
     },
     {
       "from": "cdn",
@@ -437,6 +437,22 @@
       "to": "sns",
       "label": "notify",
       "kind": "nf"
+    },
+    {
+      "from": "admin-site",
+      "to": "smtp",
+      "label": "sign-in code"
+    },
+    {
+      "from": "admin-site",
+      "to": "ssm",
+      "label": "credential",
+      "kind": "nf"
+    },
+    {
+      "from": "scheduled-publish",
+      "to": "email-send",
+      "label": "send"
     }
   ],
   "joinPorts": "all",
