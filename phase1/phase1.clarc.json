@@ -153,6 +153,9 @@
     "mailgun": {
       "sameCol": "smtp",
       "sameRow": "params"
+    },
+    "smtp": {
+      "sameRow": "eip"
     }
   }
 }
