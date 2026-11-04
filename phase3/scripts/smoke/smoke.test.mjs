@@ -66,8 +66,10 @@ describe('public site (static, from the content bucket)', () => {
     assert.equal(r.status, 404);
   });
   test('the bare root is not a bucket listing', T, async () => {
+    // The test distribution has no origin for it (404); the live domain serves the marketing page (200).
     const r = await get('/');
-    assert.equal(r.status, 404);
+    assert.ok([200, 404].includes(r.status), `bare root answered ${r.status}`);
+    assert.doesNotMatch(await r.text(), /<ListBucketResult|<Contents>/, 'the root exposes a bucket listing');
   });
   test('an image and its size variant are served', T, async () => {
     const m = homeHtml.match(new RegExp(`${P}/content/images/[^"'\\s)]+?\\.(?:jpe?g|png|webp)`));
