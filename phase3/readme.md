@@ -71,7 +71,7 @@ No paid tier is planned. R5 and R6 stay in the inventory so Ghost's paid-subscri
 
 ### 4. Admin functions (one user, low volume, cold starts acceptable)
 
-The Admin API (~236 routes) is grouped by dependency weight, not by route count.
+The Admin API (242 routes in the 6.73 release) is grouped by dependency weight, not by route count.
 Single concurrency cap, low.
 
 | ID | Endpoint families | Why grouped |
@@ -434,7 +434,7 @@ check is reused), and the rollback path. Layout follows Phase 2:
 Stages and flags (all off or empty until turned on; the plan on the adopted
 state stays empty with them off): `deploy_storage` (two buckets, on),
 `deploy_functions` (queue, 16 functions with roles and log groups, one HTTP API
-with about 190 routes and per-route throttling, queue trigger, schedules,
+with 129 routes and per-route throttling, queue trigger, schedules,
 alarms), `enable_schedules` (recurring background jobs; on by default),
 and the existing container flag. The distribution change comes last.
 The infrastructure code owns configuration; each function's code is a
