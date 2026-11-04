@@ -314,8 +314,9 @@ resource "aws_cloudfront_distribution" "site" {
   # (s3-ghost-phase2-data, lightsail-ghost-phase2) only exist when
   # deploy_cloudfront = true (deploy_cloudfront requires deploy_lightsail =
   # true, see variables.tf), same gate as this group.
+  # Gone after the Phase 3 flip: images come from the content bucket and the container service is removed.
   dynamic "origin_group" {
-    for_each = var.deploy_cloudfront ? [1] : []
+    for_each = var.deploy_cloudfront && !var.deploy_phase3_edge ? [1] : []
     content {
       origin_id = "images-with-app-fallback"
 

@@ -50,8 +50,9 @@ variable "deploy_cloudfront" {
   validation {
     # Nothing to point at otherwise. Caught at plan time rather than as a
     # confusing provider error mid-apply.
-    condition     = var.deploy_cloudfront == false || var.deploy_lightsail == true
-    error_message = "deploy_cloudfront requires deploy_lightsail = true: there would be no Lightsail origin to point the behaviours at."
+    # After the Phase 3 flip the behaviours point at the Phase 3 origins, so the container service may go.
+    condition     = var.deploy_cloudfront == false || var.deploy_lightsail == true || var.deploy_phase3_edge == true
+    error_message = "deploy_cloudfront requires deploy_lightsail = true (or deploy_phase3_edge = true): there would be no origin to point the behaviours at."
   }
 
   validation {
