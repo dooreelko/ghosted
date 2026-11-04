@@ -91,6 +91,23 @@ describe('members and content API (functions behind the gateway)', () => {
     assert.notEqual(r.status, 204, 'the edge answered 204 for a request carrying a member uuid');
     assert.ok(r.status >= 400 && r.status < 500, `unknown uuid is refused by Ghost (got ${r.status})`);
   });
+  test('the requests the sign-in script makes at page load all succeed, with several visitors at once', T, async () => {
+    // The browser sends these in parallel; a function capped below the burst throttles one of them (503) and the
+    // sign-in script then fails to start. Sequential checks cannot see that. The public key comes from the page.
+    const home = await (await get(`${P}/`)).text();
+    const key = home.match(/data-key="([^"]+)"/)?.[1];
+    assert.ok(key, 'the page carries the content API key for the sign-in script');
+    const load = () => [
+      `${P}/members/api/member/`,
+      `${P}/members/api/member/`,
+      `${P}/ghost/api/content/settings/?key=${key}`,
+      `${P}/ghost/api/content/tiers/?limit=100&include=monthly_price%2Cyearly_price%2Cbenefits&key=${key}`,
+      `${P}/ghost/api/content/newsletters/?limit=100&key=${key}`,
+    ];
+    const results = await Promise.all([0, 1, 2].flatMap(load).map(async (u) => [u.replace(/key=.*/, 'key=…'), (await get(u)).status]));
+    const bad = results.filter(([, status]) => ![200, 204].includes(status));
+    assert.deepEqual(bad, [], 'every request of three simultaneous page loads is answered');
+  });
   test('content API refuses a wrong key', T, async () => {
     assert.equal((await get(`${P}/ghost/api/content/posts/?key=smoke-wrong`)).status, 401);
   });

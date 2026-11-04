@@ -17,7 +17,7 @@ locals {
     members-session = { memory = 512, timeout = 30, concurrency = 5, store = "rw", content = "none", queue = false, smtp = true, description = "Members app: session, member, magic links" }
     comments        = { memory = 512, timeout = 30, concurrency = 3, store = "rw", content = "none", queue = false, smtp = false, description = "Comments router" }
     webmentions     = { memory = 512, timeout = 30, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Webmention receiver" }
-    content-api     = { memory = 512, timeout = 30, concurrency = 2, store = "ro", content = "none", queue = false, smtp = false, description = "Content API (read-only)" }
+    content-api     = { memory = 512, timeout = 30, concurrency = 6, store = "ro", content = "none", queue = false, smtp = false, description = "Content API (read-only)" }
     # Render
     generator = { memory = 2048, timeout = 600, concurrency = 2, store = "ro", content = "rw", content_delete = true, consumes_queue = true, invalidates = true, queue = false, smtp = false, description = "Renders pages from a store snapshot, runs the image preflight" }
     preview   = { memory = 1024, timeout = 30, concurrency = 2, store = "ro", content = "ro", queue = false, smtp = false, description = "Draft preview, email web view, unsubscribe, gift preview" }
