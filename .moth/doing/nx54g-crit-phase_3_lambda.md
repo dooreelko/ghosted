@@ -506,3 +506,47 @@ overrides at the CDN.**
   it. Also learned: links in a mail point at the site URL, so before the
   flip they resolve against Phase 2; test them with the host swapped to the
   test distribution.
+
+
+
+- Cutover executed. Order that worked: re-seed the Phase 3 store from live
+  Phase 2 right before the flip (this wipes everything created in Phase 3
+  while testing, including the test label and posts; decided, because the
+  rehearsal data must not reach production); migrate explicitly through the
+  maintenance function; run the generator to completion; compare what it
+  wrote with the live site (all public pages and feeds identical; the only
+  differences were the admin client files, which the live container serves as
+  an older build); smoke suite and gate on the test distribution; clear the
+  test-only admin URL; apply the distribution change; wildcard invalidation;
+  smoke suite and gate again through the live domain. Phase 2's container and
+  the test distribution stay until the owner says to remove them (rollback
+  stays possible). Learned: the seed tool's offline migration used an older
+  Ghost release than the functions run, so the function-side migration did the
+  real work; the seed should use the functions' release. The one lost-race
+  error during that migration left the store consistent (checked).
+- Sign-in state must be visible across copies at once. A warm copy trusts its
+  snapshot for a short time, so a session written by one copy was invisible to
+  the next request on another and the admin bounced to the sign-in page right
+  after a successful sign-in (it worked a moment later). The admin functions
+  and the members function now check the store on every request (one small
+  read each); the readers keep the short trust window. Found by the owner
+  signing in, not by the tests.
+- Concurrency caps must cover the parallel requests a browser makes. A page
+  load sends several content API requests at once; the cap of 2 throttled one
+  of them (the tiers answer), the sign-in script then failed to start and the
+  sign-in link did nothing. Raised to 6. Lesson recorded as a rule for the
+  smoke suite: it must send what a browser sends, in parallel and with several
+  visitors, because sequential checks cannot see a cap; a test now does. The
+  members and comments caps (5 and 3) have not shown the problem and are
+  unchanged.
+- The smoke test for the bare root accepts the live marketing page (the root
+  is served from its own origin there) and still rejects a bucket listing.
+- Known differences from Phase 2, accepted: a signed-in member's header still
+  shows "Sign in" because pages are pre-rendered without a member (tracked as
+  its own known-issue task). The sign-in 2FA mail arrived twice once; no
+  replayed write was found, a cold start is the suspect, not confirmed.
+- Open after the flip: owner's call on removing the container service and the
+  test distribution; the real newsletter send to all members (owner's explicit
+  go only); the stuck-at-submitting guard for the email function timeout; the
+  comment-moderation frame; the keyed content API smoke test (needs a key).
+  The account budget exists and the owner judged it sufficient.
