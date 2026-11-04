@@ -149,6 +149,10 @@
   "hints": {
     "viewer": {
       "start": true
+    },
+    "mailgun": {
+      "sameCol": "smtp",
+      "sameRow": "params"
     }
   }
 }
