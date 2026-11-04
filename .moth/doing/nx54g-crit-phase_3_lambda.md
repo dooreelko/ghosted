@@ -558,3 +558,16 @@ overrides at the CDN.**
   segment). Known gap: creating a post from HTML through the admin API fails
   because the HTML-to-editor-format converter is not in the function bundle;
   the admin editor does not use that route, so it only affects tooling.
+
+- Phase 2 runtime removed after the flip, on the owner's explicit go: the
+  container service, its runtime role and its image-pull grant are gone; the
+  old data bucket and the image repository are kept (decided earlier). The
+  distribution lost the container origin and the Phase 2 image-fallback group;
+  its plan-time guard that tied the site distribution to the container service
+  now also accepts the Phase 3 edge. Rollback from here means re-applying from
+  the Phase 3 code with the container flag on, not a switch. The suite and the
+  gate passed on the live domain afterwards. Learned: removing an origin that a
+  failover group still names is rejected, so the group goes first, and a partly
+  applied plan is safe to continue by planning again.
+- The rehearsal (test) distribution was removed on the owner's go. From now on
+  every check, including mail links, goes through the live domain.
