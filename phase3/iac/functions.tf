@@ -283,6 +283,10 @@ resource "aws_lambda_function" "function" {
       } : {}, var.admin_url_override != "" && startswith(each.key, "admin-") ? {
       # Test only: Ghost accepts sign-ins from its admin URL's origin alone, so the test distribution needs it named
       admin__url = var.admin_url_override
+      } : {}, each.value.store == "rw" && (startswith(each.key, "admin-") || each.key == "members-session") ? {
+      # Sign-in state (sessions, magic-link tokens) is written by one copy and read by the next request,
+      # which may land on another warm copy: those copies check the store on every request, not every 30 s
+      FRESH_TTL_MS = "0"
       } : {}, each.value.smtp ? {
       SMTP_PARAMETER_NAME = var.smtp_parameter_name
       MAIL_USER           = var.mail_user
