@@ -295,7 +295,7 @@ resource "aws_cloudfront_distribution" "site" {
   # rather than through the container. The OAC below is what makes this
   # readable while the bucket itself stays private.
   dynamic "origin" {
-    for_each = var.deploy_cloudfront ? [1] : []
+    for_each = var.deploy_cloudfront && !var.deploy_phase3_edge ? [1] : []
     content {
       origin_id                = "s3-ghost-phase2-data"
       domain_name              = aws_s3_bucket.data.bucket_regional_domain_name
@@ -410,7 +410,7 @@ resource "aws_cloudfront_distribution" "site" {
 }
 
 resource "aws_cloudfront_origin_access_control" "data" {
-  count = var.deploy_cloudfront ? 1 : 0
+  count = var.deploy_cloudfront && !var.deploy_phase3_edge ? 1 : 0
 
   name                              = "ghost-phase2-data"
   description                       = "Lets the site distribution read images out of the private phase2 data bucket"

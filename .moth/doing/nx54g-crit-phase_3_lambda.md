@@ -571,3 +571,16 @@ overrides at the CDN.**
   applied plan is safe to continue by planning again.
 - The rehearsal (test) distribution was removed on the owner's go. From now on
   every check, including mail links, goes through the live domain.
+
+- Remaining Phase 2 parts were removed on the owner's go: the container's
+  three CloudWatch alarms (the one stuck in alarm since September included),
+  the site distribution's origin for the Phase 2 data bucket with its access
+  control and bucket read grant, and all but the newest image (with its two
+  platform manifests) in the Phase 2 image repository. Kept: the alarm topic
+  and its subscription (the Phase 3 alarms use it), and the Phase 2 data bucket
+  itself, the only copy of the original production store, until the owner says.
+  Learned: when an origin and the access control it uses are removed in the
+  same plan, the control's delete runs first and is rejected as still in use,
+  and the distribution update never starts. Drop the origin in one apply, the
+  control in the next. The credentialed smoke run after this change was not
+  done by the agent (reading the admin key was blocked); the owner runs it.

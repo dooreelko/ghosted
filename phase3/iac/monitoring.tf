@@ -42,6 +42,8 @@ locals {
 # 1wk/Maximum/notBreaching shape let one stale datapoint pin ALARM for up to
 # a week and then send a decoupled "recovered" email when it aged out.
 resource "aws_cloudwatch_metric_alarm" "orphaned_segments" {
+  count = var.deploy_lightsail ? 1 : 0 # watches the container's own metrics; gone with it
+
   alarm_name          = "ghost-phase2-orphaned-segments"
   alarm_description   = "A boot-time dry-run sweep found orphaned sqlite-s3 segments -- the checkpoint/reclamation fix (zwx7x) may have regressed. Often benign (a lease held during boot orphans a segment by design, see deorphan.sh) -- run deorphan.sh and see if a subsequent boot clears this before assuming a regression."
   namespace           = "GhostPhase2/SqliteS3"
@@ -62,6 +64,8 @@ resource "aws_cloudwatch_metric_alarm" "orphaned_segments" {
 # count is not itself a failure (the retry succeeded), but it is exactly
 # the metric that would show whether that race is rare or common.
 resource "aws_cloudwatch_metric_alarm" "restore_retries" {
+  count = var.deploy_lightsail ? 1 : 0 # watches the container's own metrics; gone with it
+
   alarm_name          = "ghost-phase2-restore-retries"
   alarm_description   = "restoreLocalDb had to re-read the manifest and retry at least once during a boot -- the TOCTOU race zwx7x parked/closed with a retry is firing in production."
   namespace           = "GhostPhase2/SqliteS3"
@@ -81,6 +85,8 @@ resource "aws_cloudwatch_metric_alarm" "restore_retries" {
 # (leaseTtlMs in restore.js). Alarm at half that TTL so a restore trending
 # toward it is caught before it actually outruns its lease.
 resource "aws_cloudwatch_metric_alarm" "restore_duration" {
+  count = var.deploy_lightsail ? 1 : 0 # watches the container's own metrics; gone with it
+
   alarm_name          = "ghost-phase2-restore-duration-high"
   alarm_description   = "A boot-time restore took over half the lease TTL (2.5 of 5 minutes) -- restoreLocalDb's lease.refresh() is unused, so a slower restore risks outrunning its lease protection."
   namespace           = "GhostPhase2/SqliteS3"

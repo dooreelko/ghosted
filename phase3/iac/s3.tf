@@ -18,7 +18,7 @@ data "aws_caller_identity" "current" {}
 # never be publicly reachable. The public access block above stays fully on;
 # an OAC bucket policy is not "public" access.
 data "aws_iam_policy_document" "data_cloudfront_read" {
-  count = var.deploy_cloudfront ? 1 : 0
+  count = var.deploy_cloudfront && !var.deploy_phase3_edge ? 1 : 0
 
   statement {
     sid       = "AllowCloudFrontOACReadImages"
@@ -40,7 +40,7 @@ data "aws_iam_policy_document" "data_cloudfront_read" {
 }
 
 resource "aws_s3_bucket_policy" "data_cloudfront_read" {
-  count = var.deploy_cloudfront ? 1 : 0
+  count = var.deploy_cloudfront && !var.deploy_phase3_edge ? 1 : 0
 
   bucket = aws_s3_bucket.data.id
   policy = data.aws_iam_policy_document.data_cloudfront_read[0].json
