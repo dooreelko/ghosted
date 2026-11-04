@@ -1,6 +1,6 @@
 {
   "title": "Phase 1: Ghost on a VM",
-  "description": "Ghost runs natively on a single EC2 instance with SQLite, behind nginx, in a private subnet. The existing CloudFront distribution serves the static site from a bucket and sends the blog paths to the instance through a private VPC origin. Management is only through Systems Manager sessions, with no SSH. All outbound traffic leaves over an Elastic IP: staff and member mail to Proton's SMTP service, newsletters to Mailgun. The mail credential is read from Parameter Store through the instance role.",
+  "description": "Ghost runs natively on a single EC2 instance, with SQLite on its disk and nginx on the same instance as a local proxy, in a private subnet. The existing CloudFront distribution serves the static site from a bucket and sends the blog paths to the instance through a private VPC origin. Management is only through Systems Manager sessions, with no SSH. All outbound traffic leaves over an Elastic IP: staff and member mail to Proton's SMTP service, newsletters to Mailgun. The mail credential is read from Parameter Store through the instance role.",
   "groups": [
     {
       "id": "aws",
@@ -39,14 +39,8 @@
       "group": "aws"
     },
     {
-      "id": "nginx",
-      "label": "nginx (adds X-Forwarded-Proto)",
-      "service": "ec2",
-      "group": "vpc"
-    },
-    {
       "id": "ghost",
-      "label": "Ghost 6 + SQLite on EBS (t3.micro)",
+      "label": "EC2 t3.micro: nginx (:8000) in front of Ghost 6 + SQLite on EBS",
       "service": "ec2",
       "group": "vpc"
     },
@@ -98,13 +92,8 @@
     },
     {
       "from": "cdn",
-      "to": "nginx",
-      "label": "/blog* via VPC origin, HTTP :8000"
-    },
-    {
-      "from": "nginx",
       "to": "ghost",
-      "label": "127.0.0.1:2368"
+      "label": "/blog* via VPC origin, HTTP :8000"
     },
     {
       "from": "ghost",
