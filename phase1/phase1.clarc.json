@@ -145,6 +145,9 @@
     },
     "smtp": {
       "sameRow": "eip"
+    },
+    "eip": {
+      "sameRow": "ghost"
     }
   }
 }
