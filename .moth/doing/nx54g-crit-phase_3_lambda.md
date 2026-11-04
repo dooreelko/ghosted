@@ -584,3 +584,23 @@ overrides at the CDN.**
   and the distribution update never starts. Drop the origin in one apply, the
   control in the next. The credentialed smoke run after this change was not
   done by the agent (reading the admin key was blocked); the owner runs it.
+
+- Final cost, from the bill after the cutover: about $1.3-1.5 a month
+  incremental (almost all S3 requests and storage; Lambda, CloudFront and the
+  queue are inside free allowances), about $4 with the pre-existing DNS zones
+  and tax, against about $12-13 for Phase 2 at list price. Only a few days of
+  data; to be re-checked after a full month.
+- Mail did not change in this phase: staff and member mail through the SMTP
+  provider and newsletters through Mailgun were already how Phases 1 and 2
+  worked (the newsletter setting lives in the database and came across with
+  the seed). The Phase 1 and 2 diagrams now show both paths.
+- For comparison with Phase 2: the container was recycled on a fixed cadence
+  of about an hour (observed, cause not investigated), its store restore at
+  boot averaged about half a second in the last weeks, and visitor-visible
+  origin latency in the productive period peaked near 5 s with a 2.3 s 99th
+  percentile. Its total startup time was never recorded.
+- Grouping reaffirmed: the live HTTP API has 129 routes over 11 routed
+  functions (the four admin functions hold most of them); a function per
+  route would have been about 300 functions and routes, over the default
+  routes-per-API quota, with the same Ghost boot and store restore paid in
+  each, so it stays rejected.
