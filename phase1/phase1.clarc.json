@@ -1,0 +1,36 @@
+{
+  "title": "Phase 1: Ghost on a VM",
+  "description": "Ghost runs natively on a single EC2 instance with SQLite, behind nginx, in a private subnet. The existing CloudFront distribution serves the static site from a bucket and sends the blog paths to the instance through a private VPC origin. Management is only through Systems Manager sessions, with no SSH. Outbound mail goes to Proton's SMTP service over an Elastic IP, and the mail credential is read from Parameter Store through the instance role.",
+  "groups": [
+    { "id": "aws", "label": "AWS", "service": "aws-cloud" },
+    { "id": "vpc", "label": "VPC (private subnet, inbound only from CloudFront)", "service": "network", "group": "aws" }
+  ],
+  "nodes": [
+    { "id": "viewer", "label": "Viewer / admin (browser)", "service": "client" },
+    { "id": "dns", "label": "Route 53 (site DNS)", "service": "route_53", "group": "aws" },
+    { "id": "cdn", "label": "CloudFront (blog behaviors: admin and member uncached, public pages 60 s)", "service": "cloudfront", "group": "aws" },
+    { "id": "site", "label": "S3 (existing static site)", "service": "s3", "group": "aws" },
+    { "id": "nginx", "label": "nginx (adds X-Forwarded-Proto)", "service": "ec2", "group": "vpc" },
+    { "id": "ghost", "label": "Ghost 6 + SQLite on EBS (t3.micro)", "service": "ec2", "group": "vpc" },
+    { "id": "eip", "label": "Elastic IP (outbound SMTP and Systems Manager)", "service": "elastic_ip_address", "group": "vpc" },
+    { "id": "role", "label": "Instance role", "service": "role", "group": "aws" },
+    { "id": "params", "label": "Parameter Store (SMTP credential)", "service": "parameter_store", "group": "aws" },
+    { "id": "ssm", "label": "Systems Manager (sessions, no SSH)", "service": "systems_manager", "group": "aws" },
+    { "id": "smtp", "label": "Proton SMTP", "service": "traditional_server" }
+  ],
+  "edges": [
+    { "from": "viewer", "to": "cdn", "label": "HTTPS" },
+    { "from": "cdn", "to": "site", "label": "default: static site" },
+    { "from": "cdn", "to": "nginx", "label": "/blog* via VPC origin, HTTP :8000" },
+    { "from": "nginx", "to": "ghost", "label": "127.0.0.1:2368" },
+    { "from": "ghost", "to": "eip", "label": "SMTP :587" },
+    { "from": "eip", "to": "smtp", "label": "SMTP" },
+    { "from": "dns", "to": "cdn", "label": "DNS", "kind": "nf" },
+    { "from": "ghost", "to": "role", "label": "assume", "kind": "nf" },
+    { "from": "role", "to": "params", "label": "read credential", "kind": "nf" },
+    { "from": "ssm", "to": "ghost", "label": "admin sessions", "kind": "nf" }
+  ],
+  "hints": {
+    "viewer": { "start": true }
+  }
+}

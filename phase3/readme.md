@@ -8,8 +8,12 @@ issue stays decisions only.
 
 Directory layout follows Phase 2: `iac/` (OpenTofu), `scripts/`, `packages/`
 (per-function bundles and shared code), `docker/` or build tooling as needed.
-Nothing is implemented yet; this document is the endpoint inventory and
-function grouping the implementation will be planned from.
+**Status (2026-11-04): live.** The site has been served by Phase 3 since the
+cutover (see "Cutover from Phase 2" and "Status after the cutover"). The
+Phase 2 container service, the rehearsal distribution and the container's
+alarms are removed. Sections below that start as plans (inventory, routing,
+sizing) are kept as the design record; where reality differs, the status
+section says so.
 
 ## Principles
 
@@ -276,6 +280,19 @@ rule if needed (fix if hit).
 
 ## Cutover from Phase 2
 
+**Done (2026-11-03).** Executed as the steps below, each after the owner's go:
+re-seed, migrate, generator, parity (all generated objects identical to live),
+smoke suite and gate on the rehearsal distribution, flip, invalidation, suite
+and gate on the live domain. Afterwards the Lightsail service, the rehearsal
+distribution and the container's alarms, the distribution origin and access
+control for the Phase 2 data bucket were removed, and the image repository was
+pruned to its newest image. Kept until the owner says: the Phase 2 data bucket
+(the only copy of the original store, no versioning) and the alarm topic (the
+Phase 3 alarms use it). Rollback is no longer a switch: it means applying the
+Phase 3 code with the container flag on and redeploying from the image.
+
+Plan as written before the cutover:
+
 Copy-based, as in Phase 2, but without the downtime window: the old setup
 keeps serving until the flip. Accepted: anything written to the old setup
 after the database copy is not carried over (single author, no signups,
@@ -319,15 +336,18 @@ Phase 3 code, which keeps the Lightsail flag.
 
 ### Smoke suite and CloudWatch gate
 
-`scripts/run-smoke.sh` is the automated check to run before the flip against the
-test distribution (a rehearsal) and again through the live domain after it. It runs the
+`scripts/run-smoke.sh` is the automated check to run after every deploy against the
+live domain (it was also run against a rehearsal distribution before the flip, now
+removed). It runs the
 suite (`scripts/smoke/smoke.test.mjs`, plain `node:test`, no dependencies) and then
 the gate (`scripts/smoke/cloudwatch-gate.mjs`) for the same time window; it exits
 non-zero if either fails. The suite covers: home page, sitemap, RSS, slash redirect, 404
-page, bare root, an image and its size variant, anonymous member and session answers,
+page, bare root (200 or 404, never a storage listing), an image and its size variant, anonymous member and session answers,
 content API with a wrong and the right key, the admin client files, admin API without
 and with an integration key (reads, a burst of parallel calls like the admin client makes at
-load, a draft created, edited and deleted), and, with `SMOKE_SCHEDULED=1`, a scheduled
+load, a draft created, edited and deleted), the requests the portal script makes at page
+load fired by several visitors at once (all must be 200 or 204; a throttled call crashed the
+portal once), and, with `SMOKE_SCHEDULED=1`, a scheduled
 post that publishes itself (about 3 minutes). It never sends a newsletter and never prints a key;
 keys and the edge address come from environment variables. The gate waits for
 metrics to settle, then fails on: any alarm in ALARM now or during the window, API 5xx,
@@ -349,6 +369,27 @@ of them the member-session check, 349 comment counts) and about 2,700 admin
 API calls (the owner editing). So dynamic traffic is a few thousand requests a
 month, three orders of magnitude below the free allowances.
 
+### Final estimate (2026-11-04, from the bill)
+
+Cost Explorer, Oct 1 to Nov 4. First full days on Phase 3 (Nov 2-3): $0.044-0.048 a
+day, about **$1.35 a month** incremental, almost all S3 requests and storage; API
+Gateway about $0.001 a day, ECR about $0.005, CloudFront and Lambda $0. Route 53
+(~$2.50 a month, billed on the 1st) is the zones that existed before this project, not
+Phase 3's. Tax adds about 8%. Lightsail shows $0 (free trial; list price $10).
+
+| | Monthly |
+|---|---|
+| **Phase 3 incremental** | **~$1.3-1.5** |
+| All-in with Route 53 and tax | ~$4 |
+| Phase 2 at list price | ~$12-13 |
+| Saving | ~$11 |
+
+Only a few days of data; re-check after a full month. The remaining Phase 3 line items
+are the Phase 2 data bucket (86 MB, kept for now) and S3 requests from the generator
+and cold-start restores. The ECR repository is down to one image (~$0.005 a month).
+
+Estimate made before the cutover, kept for comparison:
+
 | Item | Phase 3 monthly | Notes |
 |---|---|---|
 | Lambda (all functions) | $0 | Perpetual free tier is 1M requests and 400k GB-seconds; this uses under 1% |
@@ -359,7 +400,7 @@ month, three orders of magnitude below the free allowances.
 | CloudWatch alarms and Lambda logs | ~$0-0.5 | Built-in Lambda metrics replace the custom boot metrics |
 | Parameter Store, SNS | ~$0 | As today |
 | CloudFront access logs (page stats) | ~$0.20 per 1M requests | Same in both phases; ~$0.007 at 33k |
-| Old data bucket + image repository kept for rollback | ~$0.1-0.3 | Until the owner removes them |
+| Old data bucket (kept) and image repository (one image left) | ~$0.1-0.2 | Bucket until the owner removes it |
 | **Total** | **about $0.5-1.5** | vs **$12-13** |
 
 Saving: about $11-12 a month, almost all of it the container service.
@@ -401,9 +442,12 @@ placeholder replaced by the deploy script, and changes to it are ignored.
 
 ## Edge: directory indexes and the 404 page
 
-**Implemented (flag `deploy_phase3_edge`, off):** one apply swaps the site distribution's /blog
-behaviors from the container to the Phase 3 origins. Off, the plan is empty (the Phase 2
-behaviors are kept verbatim behind the flag), so turning it off again is the rollback. On, the
+**Live (flag `deploy_phase3_edge`, on since the cutover):** one apply swapped the site distribution's /blog
+behaviors from the container to the Phase 3 origins. The Phase 2 behaviors, origin group, container origin and
+data-bucket origin are now gated off with the flag (Lightsail is removed, so turning the flag off needs the
+container flag on too). The text below was written before the flip; the test-only notes (`admin_url_override`,
+the rehearsal distribution) no longer apply: the override is cleared and the rehearsal distribution is gone.
+Before the flip the plan was empty with the flag off; on, the
 plan adds a cache policy honoring the origin's headers, a query-only request policy, a content
 access control, two edge functions (directory indexes and slash redirects; anonymous member
 check), the content bucket policy (read plus listing) and changes the distribution: two
@@ -792,6 +836,43 @@ redirects to the original) and the generator.
 - Content API (R8) is kept as a read-only function, cacheable at the CDN, even though nothing in the repo uses it today.
 - Dispatch: one API Gateway HTTP API in front of all dynamic functions (readers, render, admin), with per-route throttling; see Routing.
 - Cold-start time is measured after the first deploy and sizing is adjusted then; no separate spike deploy.
+
+## Status after the cutover
+
+What the live run changed or added to the design:
+
+- **Sign-in freshness.** A warm copy trusts its store snapshot for `FRESH_TTL_MS` (30 s),
+  so a session written by one copy was invisible to another: admin sign-in bounced back to
+  the login page. The sign-in functions (`admin-*`, `members-session`) run with
+  `FRESH_TTL_MS=0` (check the manifest on every request); readers keep 30 s.
+- **Concurrency caps are a cost guard, and over-cap requests are API Gateway 503s.** The
+  portal makes three parallel content API calls at page load; with the cap at 2 one was
+  throttled and the portal crashed. `content-api` is now 6. `members-session` (5) and
+  `comments` (3) are unchanged. Rule: a cap must cover the parallel calls a page makes,
+  and the smoke suite fires them.
+- **Static pages show "Sign in" for signed-in members.** Pages are pre-rendered with no
+  member, so the theme's signed-out branch always renders. Members still sign in
+  (the member API returns them). Known issue, moth m69im; accepted.
+- **Anonymous member checks** are answered at the edge as designed; members-session boots
+  only for signed-in readers.
+- **Post creation by `?source=html` fails** (the html-to-lexical converter is not in the
+  bundle). The admin editor and Lexical JSON work. Not needed so far.
+- **Live newsletter test.** A test post and Ghost's own test send (to one address only)
+  were verified end to end on the live domain: mail arrived, all links worked. A real send
+  to all members has not been done and needs an explicit owner go; recommended first: a
+  one-person labelled send (the `test` label was wiped by the re-seed and needs recreating).
+- **Mail.** Newsletters go through Mailgun, staff sign-in mail through SMTP.
+- **Seed script** migrates the dumped database offline with the Ghost image the functions
+  run, so no function migrates on a cold start. A warm maintenance copy that booted
+  unmigrated stays in migrate-only mode until recycled; repeated `{"migrate": true}` calls
+  can report `migrated: true` meanwhile (the data is fine).
+- **Removing an origin and its access control** in one plan fails: the control's delete runs
+  first and is rejected as in use, and the distribution update never starts. Drop the origin
+  in one apply, the control in the next. CloudFront also will not remove an origin an origin
+  group still lists, so the group goes first.
+- **Unexplained:** one double 2FA mail at sign-in (cold start suspected).
+- **Not decided:** a guard for emails left at `submitting` after the `email-send` 300 s
+  timeout; removing the Phase 2 data bucket.
 
 ## Open
 
