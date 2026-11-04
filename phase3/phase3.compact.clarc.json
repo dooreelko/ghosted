@@ -340,7 +340,7 @@
       "sameRow": "admin"
     },
     "smtp": {
-      "sameCol": "mailgun"
+      "sameRow": "data"
     },
     "ssm": {
       "above": "bg",
@@ -362,7 +362,8 @@
     },
     "mailgun": {
       "rightOf": "dlq",
-      "sameRow": "dlq"
+      "sameRow": "dlq",
+      "sameCol": "smtp"
     }
   },
   "joinPorts": "all"
