@@ -550,3 +550,11 @@ overrides at the CDN.**
   go only); the stuck-at-submitting guard for the email function timeout; the
   comment-moderation frame; the keyed content API smoke test (needs a key).
   The account budget exists and the owner judged it sufficient.
+
+- Live mail check after the flip: Ghost's built-in test email (sends only to the
+  address given, no member send) reached the test member through Mailgun and all
+  links in it worked on the live host. Not yet exercised on the live site: the
+  real send path (the send function with tracked links to a one-person
+  segment). Known gap: creating a post from HTML through the admin API fails
+  because the HTML-to-editor-format converter is not in the function bundle;
+  the admin editor does not use that route, so it only affects tooling.
