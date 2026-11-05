@@ -12,7 +12,7 @@ locals {
   # content: "rw" read+write, "ro" read, "none".
   functions = {
     # Reader-facing
-    image-resize    = { memory = 512, timeout = 30, concurrency = 2, store = "none", content = "rw", queue = false, smtp = false, description = "Size-variant fallback on a missing image" }
+    image-resize    = { memory = 512, timeout = 30, concurrency = 10, store = "none", content = "rw", queue = false, smtp = false, description = "Size-variant fallback on a missing image" }
     link-redirect   = { memory = 512, timeout = 30, concurrency = 10, store = "rw", content = "none", queue = false, smtp = false, description = "Newsletter click-tracking redirect" }
     members-session = { memory = 512, timeout = 30, concurrency = 5, store = "rw", content = "none", queue = false, smtp = true, description = "Members app: session, member, magic links" }
     comments        = { memory = 512, timeout = 30, concurrency = 3, store = "rw", content = "none", queue = false, smtp = false, description = "Comments router" }
