@@ -629,3 +629,12 @@ overrides at the CDN.**
   raise that function's reserved concurrency to 10 (cost only on misses).
   Not done: making the send wait for the regeneration to finish, which would
   remove the race entirely but couples the send to the generator.
+
+
+- Closed by the owner after the cutover, the leftover removals, the cost
+  check and the newsletter send. Still open by choice, outside this task: the
+  Phase 2 data bucket (only copy of the original store) stays until the owner
+  removes it; the per-function packages idea; the stuck-at-submitting guard;
+  the cold-start and large-upload timing limits (uploads near the gateway
+  timeout, one upload at a time); re-checking the monthly cost after a full
+  month. Unit suites and the infrastructure validation pass at close.
