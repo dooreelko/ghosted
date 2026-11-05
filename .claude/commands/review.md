@@ -6,3 +6,5 @@ points of interest:
   - arc (separate for each section)
 
 list an issue with context, show an explanation and a proposal. don't bundle issues together
+
+don't suggest em-dashes. this is a text written by a human.

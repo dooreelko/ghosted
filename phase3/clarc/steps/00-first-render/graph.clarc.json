@@ -1,0 +1,412 @@
+{
+  "title": "Phase 3: serverless Ghost",
+  "description": "Static public site in S3 behind CloudFront; path-routed classic Lambda function URLs (Express inside) for dynamic, admin and background work",
+  "groups": [
+    {
+      "id": "readers",
+      "label": "Reader-facing functions",
+      "service": "group"
+    },
+    {
+      "id": "admin",
+      "label": "Admin functions",
+      "service": "group"
+    },
+    {
+      "id": "render",
+      "label": "Render",
+      "service": "group"
+    },
+    {
+      "id": "bg",
+      "label": "Background functions",
+      "service": "group"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "viewer",
+      "label": "Viewer / admin (browser)",
+      "service": "client"
+    },
+    {
+      "id": "dns",
+      "label": "DNS zone",
+      "service": "route_53"
+    },
+    {
+      "id": "stripe",
+      "label": "Stripe",
+      "service": "traditional_server"
+    },
+    {
+      "id": "cdn",
+      "label": "CloudFront (path behaviors)",
+      "service": "cloudfront"
+    },
+    {
+      "id": "content",
+      "label": "Content bucket (HTML, images)",
+      "service": "s3"
+    },
+    {
+      "id": "data",
+      "label": "SQLite store bucket",
+      "service": "s3"
+    },
+    {
+      "id": "resize",
+      "label": "image-resize",
+      "service": "lambda",
+      "group": "readers"
+    },
+    {
+      "id": "redirect",
+      "label": "link-redirect",
+      "service": "lambda",
+      "group": "readers"
+    },
+    {
+      "id": "session",
+      "label": "members-session",
+      "service": "lambda",
+      "group": "readers"
+    },
+    {
+      "id": "comments",
+      "label": "comments",
+      "service": "lambda",
+      "group": "readers"
+    },
+    {
+      "id": "billing",
+      "label": "billing",
+      "service": "lambda",
+      "group": "readers"
+    },
+    {
+      "id": "webhook",
+      "label": "stripe-webhook",
+      "service": "lambda",
+      "group": "readers"
+    },
+    {
+      "id": "mentions",
+      "label": "webmentions",
+      "service": "lambda",
+      "group": "readers"
+    },
+    {
+      "id": "a_content",
+      "label": "admin-content",
+      "service": "lambda",
+      "group": "admin"
+    },
+    {
+      "id": "a_audience",
+      "label": "admin-audience",
+      "service": "lambda",
+      "group": "admin"
+    },
+    {
+      "id": "a_site",
+      "label": "admin-site",
+      "service": "lambda",
+      "group": "admin"
+    },
+    {
+      "id": "a_heavy",
+      "label": "admin-heavy",
+      "service": "lambda",
+      "group": "admin"
+    },
+    {
+      "id": "gen",
+      "label": "generator (render + image preflight)",
+      "service": "lambda",
+      "group": "render"
+    },
+    {
+      "id": "events",
+      "label": "EventBridge schedules",
+      "service": "eventbridge"
+    },
+    {
+      "id": "sched",
+      "label": "scheduled-publish",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
+      "id": "email",
+      "label": "email-send",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
+      "id": "maint",
+      "label": "maintenance",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
+      "id": "ckpt",
+      "label": "checkpoint",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
+      "id": "smtp",
+      "label": "SMTP provider",
+      "service": "traditional_server"
+    },
+    {
+      "id": "ssm",
+      "label": "Parameter Store (secrets)",
+      "service": "parameter_store"
+    },
+    {
+      "id": "cw",
+      "label": "CloudWatch",
+      "service": "cloudwatch_2"
+    }
+  ],
+  "edges": [
+    {
+      "from": "viewer",
+      "to": "cdn",
+      "label": "HTTPS"
+    },
+    {
+      "from": "stripe",
+      "to": "cdn",
+      "label": "webhook"
+    },
+    {
+      "from": "dns",
+      "to": "cdn",
+      "label": "DNS",
+      "kind": "nf"
+    },
+    {
+      "from": "cdn",
+      "to": "content",
+      "label": "default: static pages, images"
+    },
+    {
+      "from": "cdn",
+      "to": "resize",
+      "label": "S3 miss (variants)"
+    },
+    {
+      "from": "cdn",
+      "to": "redirect",
+      "label": "/r/*"
+    },
+    {
+      "from": "cdn",
+      "to": "session",
+      "label": "/members/api/*"
+    },
+    {
+      "from": "cdn",
+      "to": "comments",
+      "label": "comments"
+    },
+    {
+      "from": "cdn",
+      "to": "billing",
+      "label": "billing"
+    },
+    {
+      "from": "cdn",
+      "to": "webhook",
+      "label": "webhook"
+    },
+    {
+      "from": "cdn",
+      "to": "mentions",
+      "label": "webmentions"
+    },
+    {
+      "from": "cdn",
+      "to": "a_content",
+      "label": "admin api"
+    },
+    {
+      "from": "cdn",
+      "to": "a_audience",
+      "label": "admin api"
+    },
+    {
+      "from": "cdn",
+      "to": "a_site",
+      "label": "admin api"
+    },
+    {
+      "from": "cdn",
+      "to": "a_heavy",
+      "label": "admin api"
+    },
+    {
+      "from": "resize",
+      "to": "content",
+      "label": "write variants"
+    },
+    {
+      "from": "a_heavy",
+      "to": "content",
+      "label": "presigned uploads"
+    },
+    {
+      "from": "a_content",
+      "to": "gen",
+      "label": "site changed"
+    },
+    {
+      "from": "gen",
+      "to": "content",
+      "label": "write HTML"
+    },
+    {
+      "from": "gen",
+      "to": "data",
+      "label": "read snapshot"
+    },
+    {
+      "from": "session",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "comments",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "billing",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "webhook",
+      "to": "data",
+      "label": "write"
+    },
+    {
+      "from": "redirect",
+      "to": "data",
+      "label": "clicks"
+    },
+    {
+      "from": "mentions",
+      "to": "data",
+      "label": "write"
+    },
+    {
+      "from": "a_content",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "a_audience",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "a_site",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "a_heavy",
+      "to": "data",
+      "label": "import/export"
+    },
+    {
+      "from": "events",
+      "to": "sched",
+      "label": "one-shot per post"
+    },
+    {
+      "from": "events",
+      "to": "maint",
+      "label": "recurring"
+    },
+    {
+      "from": "events",
+      "to": "ckpt",
+      "label": "recurring"
+    },
+    {
+      "from": "sched",
+      "to": "gen",
+      "label": "publish"
+    },
+    {
+      "from": "a_audience",
+      "to": "email",
+      "label": "newsletter send"
+    },
+    {
+      "from": "email",
+      "to": "smtp",
+      "label": "SMTP"
+    },
+    {
+      "from": "sched",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "email",
+      "to": "data",
+      "label": "read/write"
+    },
+    {
+      "from": "maint",
+      "to": "data",
+      "label": "cleanup"
+    },
+    {
+      "from": "ckpt",
+      "to": "data",
+      "label": "compact"
+    },
+    {
+      "from": "billing",
+      "to": "ssm",
+      "label": "Stripe key",
+      "kind": "nf"
+    },
+    {
+      "from": "email",
+      "to": "ssm",
+      "label": "SMTP credential",
+      "kind": "nf"
+    },
+    {
+      "from": "cdn",
+      "to": "cw",
+      "label": "access logs",
+      "kind": "nf"
+    },
+    {
+      "from": "ckpt",
+      "to": "cw",
+      "label": "metrics",
+      "kind": "nf"
+    }
+  ],
+  "hints": {
+    "viewer": {
+      "start": true
+    },
+    "dns": {
+      "below": "cdn"
+    },
+    "stripe": {
+      "below": "viewer"
+    }
+  }
+}

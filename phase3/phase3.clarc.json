@@ -1,0 +1,601 @@
+{
+  "title": "Phase 3: functions as in the infrastructure code",
+  "description": "Serverless Ghost on AWS. CloudFront serves the site from a content bucket and sends dynamic paths to an HTTP API that fronts the Lambda functions. Functions read and write a SQLite database kept in an S3 bucket. Posts are rendered to static pages by a queue-driven generator (failed messages go to a dead-letter queue); EventBridge Scheduler runs the recurring and one-shot background jobs. Newsletters are sent through Mailgun, staff sign-in mail through an SMTP provider, and credentials are read from Parameter Store. CloudWatch alarms notify an email topic. A deploy bucket holds the code the functions are updated from.",
+  "groups": [
+    {
+      "id": "aws",
+      "label": "AWS",
+      "service": "aws-cloud"
+    },
+    {
+      "id": "reader",
+      "label": "Reader-facing",
+      "service": "group",
+      "group": "aws"
+    },
+    {
+      "id": "render",
+      "label": "Render",
+      "service": "group",
+      "group": "aws"
+    },
+    {
+      "id": "admin",
+      "label": "Admin",
+      "service": "group",
+      "group": "aws"
+    },
+    {
+      "id": "bg",
+      "label": "Background",
+      "service": "group",
+      "group": "aws"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "viewer",
+      "label": "Viewer / admin (browser)",
+      "service": "client"
+    },
+    {
+      "id": "cdn",
+      "label": "CloudFront (behaviors, index function, anonymous member check, 404 page)",
+      "service": "cloudfront",
+      "group": "aws"
+    },
+    {
+      "id": "apigw",
+      "label": "API Gateway HTTP API (routes, throttling)",
+      "service": "api_gateway",
+      "group": "aws"
+    },
+    {
+      "id": "content",
+      "label": "Content bucket (pages, images, admin client)",
+      "service": "s3",
+      "group": "aws"
+    },
+    {
+      "id": "store",
+      "label": "Store bucket (SQLite store)",
+      "service": "s3",
+      "group": "aws"
+    },
+    {
+      "id": "queue",
+      "label": "Generate queue",
+      "service": "sqs",
+      "group": "aws"
+    },
+    {
+      "id": "dlq",
+      "label": "Dead-letter queue",
+      "service": "sqs",
+      "group": "aws"
+    },
+    {
+      "id": "scheduler",
+      "label": "EventBridge Scheduler (recurring + one-shot)",
+      "service": "eventbridge",
+      "group": "aws"
+    },
+    {
+      "id": "alarms",
+      "label": "CloudWatch alarms",
+      "service": "cloudwatch_2",
+      "group": "aws"
+    },
+    {
+      "id": "sns",
+      "label": "Alarm topic (email)",
+      "service": "sns",
+      "group": "aws"
+    },
+    {
+      "id": "ssm",
+      "label": "Parameter Store (SMTP credential)",
+      "service": "parameter_store",
+      "group": "aws"
+    },
+    {
+      "id": "smtp",
+      "label": "SMTP provider",
+      "service": "traditional_server"
+    },
+    {
+      "id": "image-resize",
+      "label": "image-resize",
+      "service": "lambda",
+      "group": "reader"
+    },
+    {
+      "id": "link-redirect",
+      "label": "link-redirect",
+      "service": "lambda",
+      "group": "reader"
+    },
+    {
+      "id": "members-session",
+      "label": "members-session",
+      "service": "lambda",
+      "group": "reader"
+    },
+    {
+      "id": "comments",
+      "label": "comments",
+      "service": "lambda",
+      "group": "reader"
+    },
+    {
+      "id": "webmentions",
+      "label": "webmentions",
+      "service": "lambda",
+      "group": "reader"
+    },
+    {
+      "id": "content-api",
+      "label": "content-api",
+      "service": "lambda",
+      "group": "reader"
+    },
+    {
+      "id": "generator",
+      "label": "generator",
+      "service": "lambda",
+      "group": "render"
+    },
+    {
+      "id": "preview",
+      "label": "preview",
+      "service": "lambda",
+      "group": "render"
+    },
+    {
+      "id": "admin-content",
+      "label": "admin-content",
+      "service": "lambda",
+      "group": "admin"
+    },
+    {
+      "id": "admin-audience",
+      "label": "admin-audience",
+      "service": "lambda",
+      "group": "admin"
+    },
+    {
+      "id": "admin-site",
+      "label": "admin-site",
+      "service": "lambda",
+      "group": "admin"
+    },
+    {
+      "id": "admin-heavy",
+      "label": "admin-heavy",
+      "service": "lambda",
+      "group": "admin"
+    },
+    {
+      "id": "scheduled-publish",
+      "label": "scheduled-publish",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
+      "id": "email-send",
+      "label": "email-send",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
+      "id": "maintenance",
+      "label": "maintenance",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
+      "id": "sqlite-checkpoint",
+      "label": "sqlite-checkpoint",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
+      "id": "mailgun",
+      "label": "Mailgun (newsletter delivery, credentials in the store settings)",
+      "service": "traditional_server"
+    }
+  ],
+  "edges": [
+    {
+      "from": "viewer",
+      "to": "cdn",
+      "label": "HTTPS"
+    },
+    {
+      "from": "cdn",
+      "to": "content",
+      "label": "pages, images, admin client"
+    },
+    {
+      "from": "cdn",
+      "to": "apigw",
+      "label": "dynamic paths"
+    },
+    {
+      "from": "apigw",
+      "to": "image-resize"
+    },
+    {
+      "from": "apigw",
+      "to": "link-redirect"
+    },
+    {
+      "from": "apigw",
+      "to": "members-session"
+    },
+    {
+      "from": "apigw",
+      "to": "comments"
+    },
+    {
+      "from": "apigw",
+      "to": "webmentions"
+    },
+    {
+      "from": "apigw",
+      "to": "content-api"
+    },
+    {
+      "from": "apigw",
+      "to": "preview"
+    },
+    {
+      "from": "apigw",
+      "to": "admin-content"
+    },
+    {
+      "from": "apigw",
+      "to": "admin-audience"
+    },
+    {
+      "from": "apigw",
+      "to": "admin-site"
+    },
+    {
+      "from": "apigw",
+      "to": "admin-heavy"
+    },
+    {
+      "from": "link-redirect",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "members-session",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "comments",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "webmentions",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "admin-content",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "admin-audience",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "admin-site",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "admin-heavy",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "scheduled-publish",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "email-send",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "maintenance",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "sqlite-checkpoint",
+      "to": "store",
+      "label": "rw"
+    },
+    {
+      "from": "content-api",
+      "to": "store",
+      "label": "ro"
+    },
+    {
+      "from": "generator",
+      "to": "store",
+      "label": "ro"
+    },
+    {
+      "from": "preview",
+      "to": "store",
+      "label": "ro"
+    },
+    {
+      "from": "image-resize",
+      "to": "content",
+      "label": "rw"
+    },
+    {
+      "from": "generator",
+      "to": "content",
+      "label": "rw"
+    },
+    {
+      "from": "admin-heavy",
+      "to": "content",
+      "label": "rw"
+    },
+    {
+      "from": "email-send",
+      "to": "content",
+      "label": "ro"
+    },
+    {
+      "from": "preview",
+      "to": "content",
+      "label": "ro"
+    },
+    {
+      "from": "admin-content",
+      "to": "queue",
+      "label": "generate"
+    },
+    {
+      "from": "admin-audience",
+      "to": "queue",
+      "label": "generate"
+    },
+    {
+      "from": "admin-site",
+      "to": "queue",
+      "label": "generate"
+    },
+    {
+      "from": "admin-heavy",
+      "to": "queue",
+      "label": "generate"
+    },
+    {
+      "from": "scheduled-publish",
+      "to": "queue",
+      "label": "generate"
+    },
+    {
+      "from": "queue",
+      "to": "generator",
+      "label": "trigger"
+    },
+    {
+      "from": "queue",
+      "to": "dlq",
+      "label": "after 3 tries"
+    },
+    {
+      "from": "admin-content",
+      "to": "email-send",
+      "label": "send"
+    },
+    {
+      "from": "admin-audience",
+      "to": "email-send",
+      "label": "send"
+    },
+    {
+      "from": "scheduler",
+      "to": "scheduled-publish",
+      "label": "one-shot"
+    },
+    {
+      "from": "scheduler",
+      "to": "maintenance",
+      "label": "daily"
+    },
+    {
+      "from": "scheduler",
+      "to": "sqlite-checkpoint",
+      "label": "6-hourly"
+    },
+    {
+      "from": "admin-content",
+      "to": "scheduler",
+      "label": "create one-shot"
+    },
+    {
+      "from": "email-send",
+      "to": "mailgun",
+      "label": "newsletter send (HTTPS API)"
+    },
+    {
+      "from": "email-send",
+      "to": "ssm",
+      "label": "credential",
+      "kind": "nf"
+    },
+    {
+      "from": "dlq",
+      "to": "alarms",
+      "kind": "nf"
+    },
+    {
+      "from": "generator",
+      "to": "alarms",
+      "kind": "nf"
+    },
+    {
+      "from": "apigw",
+      "to": "alarms",
+      "kind": "nf"
+    },
+    {
+      "from": "alarms",
+      "to": "sns",
+      "label": "notify",
+      "kind": "nf"
+    },
+    {
+      "from": "admin-site",
+      "to": "smtp",
+      "label": "sign-in code"
+    },
+    {
+      "from": "admin-site",
+      "to": "ssm",
+      "label": "credential",
+      "kind": "nf"
+    },
+    {
+      "from": "scheduled-publish",
+      "to": "email-send",
+      "label": "send"
+    }
+  ],
+  "joinPorts": "all",
+  "hints": {
+    "viewer": {
+      "start": true
+    },
+    "cdn": {
+      "rightOf": "viewer",
+      "sameRow": "viewer"
+    },
+    "apigw": {
+      "rightOf": "cdn",
+      "sameRow": "cdn"
+    },
+    "admin-content": {
+      "rightOf": "apigw",
+      "sameRow": "apigw"
+    },
+    "admin-heavy": {
+      "rightOf": "admin-content",
+      "sameRow": "admin-content"
+    },
+    "admin-audience": {
+      "below": "admin-content",
+      "sameCol": "admin-content"
+    },
+    "admin-site": {
+      "below": "admin-audience",
+      "sameCol": "admin-content"
+    },
+    "image-resize": {
+      "below": "admin-site",
+      "sameCol": "admin-content"
+    },
+    "link-redirect": {
+      "below": "image-resize",
+      "sameCol": "admin-content"
+    },
+    "members-session": {
+      "below": "link-redirect",
+      "sameCol": "admin-content"
+    },
+    "comments": {
+      "rightOf": "image-resize",
+      "sameRow": "image-resize"
+    },
+    "webmentions": {
+      "rightOf": "link-redirect",
+      "sameRow": "link-redirect"
+    },
+    "content-api": {
+      "rightOf": "members-session",
+      "sameRow": "members-session"
+    },
+    "scheduled-publish": {
+      "above": "admin-content",
+      "sameCol": "admin-content"
+    },
+    "scheduler": {
+      "leftOf": "scheduled-publish",
+      "sameRow": "scheduled-publish"
+    },
+    "email-send": {
+      "rightOf": "scheduled-publish",
+      "sameRow": "scheduled-publish"
+    },
+    "queue": {
+      "rightOf": "email-send",
+      "sameRow": "scheduled-publish"
+    },
+    "generator": {
+      "rightOf": "queue",
+      "sameRow": "scheduled-publish"
+    },
+    "preview": {
+      "rightOf": "generator",
+      "sameRow": "scheduled-publish"
+    },
+    "maintenance": {
+      "above": "scheduled-publish",
+      "sameCol": "scheduled-publish"
+    },
+    "sqlite-checkpoint": {
+      "above": "email-send",
+      "sameCol": "email-send"
+    },
+    "smtp": {
+      "rightOf": "store",
+      "sameRow": "store"
+    },
+    "ssm": {
+      "rightOf": "sqlite-checkpoint",
+      "sameRow": "sqlite-checkpoint"
+    },
+    "dlq": {
+      "above": "queue",
+      "sameCol": "queue"
+    },
+    "content": {
+      "below": "store",
+      "sameCol": "store"
+    },
+    "store": {
+      "rightOf": "admin-heavy",
+      "sameRow": "admin-content",
+      "sameCol": "preview"
+    },
+    "alarms": {
+      "below": "members-session",
+      "sameCol": "admin-content"
+    },
+    "sns": {
+      "rightOf": "alarms",
+      "sameRow": "alarms"
+    },
+    "mailgun": {
+      "rightOf": "dlq",
+      "sameRow": "dlq"
+    }
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "title": "Phase 2: Ghost in a managed container",
+  "description": "Ghost runs as a container on a Lightsail container service, pulled from a private image registry. Its SQLite database lives in an S3 bucket as append-only segments plus a versioned manifest, so the container keeps no state. The existing CloudFront distribution serves the static site from a bucket, sends blog paths to the container service and serves images straight from the data bucket. The container assumes an IAM role for bucket access, the mail credential in Parameter Store and publishing monitoring metrics. CloudWatch alarms notify an email topic, and CloudFront access logs go to CloudWatch Logs. Staff and member mail goes to Proton's SMTP service and newsletters go through Mailgun.",
+  "groups": [
+    {
+      "id": "aws",
+      "label": "AWS",
+      "service": "aws-cloud"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "viewer",
+      "label": "Viewer / admin (browser)",
+      "service": "client"
+    },
+    {
+      "id": "dns",
+      "label": "Route 53 (site DNS)",
+      "service": "route_53",
+      "group": "aws"
+    },
+    {
+      "id": "cdn",
+      "label": "CloudFront (blog, image and default behaviors)",
+      "service": "cloudfront",
+      "group": "aws"
+    },
+    {
+      "id": "site",
+      "label": "S3 (existing static site)",
+      "service": "s3",
+      "group": "aws"
+    },
+    {
+      "id": "app",
+      "label": "Lightsail container service (Ghost + S3-backed SQLite)",
+      "service": "lightsail",
+      "group": "aws"
+    },
+    {
+      "id": "ecr",
+      "label": "ECR (Ghost image)",
+      "service": "ecr",
+      "group": "aws"
+    },
+    {
+      "id": "data",
+      "label": "S3 data bucket (SQLite segments, manifest, leases, images)",
+      "service": "s3",
+      "group": "aws"
+    },
+    {
+      "id": "role",
+      "label": "App runtime role",
+      "service": "role",
+      "group": "aws"
+    },
+    {
+      "id": "params",
+      "label": "Parameter Store (SMTP credential)",
+      "service": "parameter_store",
+      "group": "aws"
+    },
+    {
+      "id": "cw",
+      "label": "CloudWatch (boot metrics, alarms)",
+      "service": "cloudwatch_2",
+      "group": "aws"
+    },
+    {
+      "id": "logs",
+      "label": "CloudWatch Logs (CloudFront access logs)",
+      "service": "cloudwatch_2",
+      "group": "aws"
+    },
+    {
+      "id": "sns",
+      "label": "SNS alarm topic (email)",
+      "service": "sns",
+      "group": "aws"
+    },
+    {
+      "id": "smtp",
+      "label": "Proton SMTP (staff and member mail)",
+      "service": "traditional_server"
+    },
+    {
+      "id": "mailgun",
+      "label": "Mailgun (newsletters)",
+      "service": "traditional_server"
+    }
+  ],
+  "edges": [
+    {
+      "from": "viewer",
+      "to": "cdn",
+      "label": "HTTPS"
+    },
+    {
+      "from": "cdn",
+      "to": "site",
+      "label": "default: static site"
+    },
+    {
+      "from": "cdn",
+      "to": "app",
+      "label": "/blog*"
+    },
+    {
+      "from": "cdn",
+      "to": "data",
+      "label": "/blog/content/images/* (access control)"
+    },
+    {
+      "from": "app",
+      "to": "data",
+      "label": "segments, manifest, images"
+    },
+    {
+      "from": "app",
+      "to": "smtp",
+      "label": "SMTP :587"
+    },
+    {
+      "from": "dns",
+      "to": "cdn",
+      "label": "DNS",
+      "kind": "nf"
+    },
+    {
+      "from": "ecr",
+      "to": "app",
+      "label": "image pull",
+      "kind": "nf"
+    },
+    {
+      "from": "app",
+      "to": "role",
+      "label": "assume",
+      "kind": "nf"
+    },
+    {
+      "from": "role",
+      "to": "params",
+      "label": "read credential",
+      "kind": "nf"
+    },
+    {
+      "from": "app",
+      "to": "cw",
+      "label": "boot metrics",
+      "kind": "nf"
+    },
+    {
+      "from": "cw",
+      "to": "sns",
+      "label": "alarm",
+      "kind": "nf"
+    },
+    {
+      "from": "cdn",
+      "to": "logs",
+      "label": "access logs",
+      "kind": "nf"
+    },
+    {
+      "from": "app",
+      "to": "mailgun",
+      "label": "newsletter API"
+    }
+  ],
+  "hints": {
+    "viewer": {
+      "start": true
+    },
+    "mailgun": {
+      "sameCol": "smtp",
+      "sameRow": "params"
+    },
+    "smtp": {
+      "sameRow": "app"
+    }
+  }
+}

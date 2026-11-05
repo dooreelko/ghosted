@@ -1,0 +1,153 @@
+{
+  "title": "Phase 1: Ghost on a VM",
+  "description": "Ghost runs natively on a single EC2 instance, with SQLite on its disk and nginx on the same instance as a local proxy, in a private subnet. The existing CloudFront distribution serves the static site from a bucket and sends the blog paths to the instance through a private VPC origin. Management is only through Systems Manager sessions, with no SSH. All outbound traffic leaves over an Elastic IP: staff and member mail to Proton's SMTP service, newsletters to Mailgun. The mail credential is read from Parameter Store through the instance role.",
+  "groups": [
+    {
+      "id": "aws",
+      "label": "AWS",
+      "service": "aws-cloud"
+    },
+    {
+      "id": "vpc",
+      "label": "VPC (private subnet, inbound only from CloudFront)",
+      "service": "network",
+      "group": "aws"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "viewer",
+      "label": "Viewer / admin (browser)",
+      "service": "client"
+    },
+    {
+      "id": "dns",
+      "label": "Route 53 (site DNS)",
+      "service": "route_53",
+      "group": "aws"
+    },
+    {
+      "id": "cdn",
+      "label": "CloudFront (blog behaviors: admin and member uncached, public pages 60 s)",
+      "service": "cloudfront",
+      "group": "aws"
+    },
+    {
+      "id": "site",
+      "label": "S3 (existing static site)",
+      "service": "s3",
+      "group": "aws"
+    },
+    {
+      "id": "ghost",
+      "label": "EC2 t3.micro: nginx (:8000) in front of Ghost 6 + SQLite on EBS",
+      "service": "ec2",
+      "group": "vpc"
+    },
+    {
+      "id": "eip",
+      "label": "Elastic IP (outbound SMTP and Systems Manager)",
+      "service": "elastic_ip_address",
+      "group": "vpc"
+    },
+    {
+      "id": "role",
+      "label": "Instance role",
+      "service": "role",
+      "group": "aws"
+    },
+    {
+      "id": "params",
+      "label": "Parameter Store (SMTP credential)",
+      "service": "parameter_store",
+      "group": "aws"
+    },
+    {
+      "id": "ssm",
+      "label": "Systems Manager (sessions, no SSH)",
+      "service": "systems_manager",
+      "group": "aws"
+    },
+    {
+      "id": "smtp",
+      "label": "Proton SMTP (staff and member mail)",
+      "service": "traditional_server"
+    },
+    {
+      "id": "mailgun",
+      "label": "Mailgun (newsletters)",
+      "service": "traditional_server"
+    }
+  ],
+  "edges": [
+    {
+      "from": "viewer",
+      "to": "cdn",
+      "label": "HTTPS"
+    },
+    {
+      "from": "cdn",
+      "to": "site",
+      "label": "default: static site"
+    },
+    {
+      "from": "cdn",
+      "to": "ghost",
+      "label": "/blog* via VPC origin, HTTP :8000"
+    },
+    {
+      "from": "ghost",
+      "to": "eip",
+      "label": "SMTP :587"
+    },
+    {
+      "from": "eip",
+      "to": "smtp",
+      "label": "SMTP"
+    },
+    {
+      "from": "dns",
+      "to": "cdn",
+      "label": "DNS",
+      "kind": "nf"
+    },
+    {
+      "from": "ghost",
+      "to": "role",
+      "label": "assume",
+      "kind": "nf"
+    },
+    {
+      "from": "role",
+      "to": "params",
+      "label": "read credential",
+      "kind": "nf"
+    },
+    {
+      "from": "ssm",
+      "to": "ghost",
+      "label": "admin sessions",
+      "kind": "nf"
+    },
+    {
+      "from": "eip",
+      "to": "mailgun",
+      "label": "newsletter API"
+    }
+  ],
+  "hints": {
+    "viewer": {
+      "start": true
+    },
+    "mailgun": {
+      "sameCol": "smtp",
+      "sameRow": "params"
+    },
+    "smtp": {
+      "sameRow": "eip"
+    },
+    "eip": {
+      "sameRow": "ghost"
+    }
+  }
+}
