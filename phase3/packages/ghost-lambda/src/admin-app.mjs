@@ -10,6 +10,23 @@ import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 // Request paths (under /ghost/api/admin) whose success can change the public site.
 const SITE_CHANGING = /^\/(posts|pages|schedules|tags|settings|themes|users|custom_theme_settings|tiers|offers|newsletters|recommendations|redirects)(\/|$)/;
 
+// A save that leaves a post or page a draft (created as one, or edited while one) cannot change the public
+// site, so it does not ask for a regeneration: the editor autosaves a draft every few seconds. Anything else
+// does: publishing, unpublishing, scheduling, editing a published post, deleting one, bulk edits.
+// `before` is the stored status read ahead of the write (null for a create or copy).
+const POST_WRITE = /^\/(posts|pages)(?:\/([0-9a-f]{24})(\/copy)?)?\/?$/;
+
+function statusAfter(response, method) {
+  if (method === 'DELETE') return response.statusCode === 204 ? 'deleted' : null;
+  try {
+    const text = response.isBase64Encoded ? Buffer.from(response.body, 'base64').toString() : response.body;
+    const json = JSON.parse(text);
+    return (json.posts ?? json.pages)?.[0]?.status ?? null;
+  } catch {
+    return null; // unreadable: treat as a change
+  }
+}
+
 // Ghost runs background work after the response; a Lambda is frozen by then, so
 // handlers are tracked and awaited before the function returns.
 function trackedJobs(jobsService) {
@@ -65,11 +82,22 @@ export async function createAdminHandler(opts = {}) {
   // A write that can change the site asks for a regeneration when it succeeds.
   const generateQueue = opts.queue ?? (process.env.GENERATE_QUEUE_URL ? createQueue({ url: process.env.GENERATE_QUEUE_URL }) : null);
   let siteChanged = false;
+  let draftCheck = null; // { before, method } for a post or page write that may be draft-only
   const adminBase = `${config.getSubdir()}/ghost/api/admin`;
   const outer = R('shared/express')('lambda');
-  outer.use(adminBase, (req, res, next) => {
+  outer.use(adminBase, async (req, res, next) => {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && SITE_CHANGING.test(req.path)) {
       siteChanged = true;
+      draftCheck = null;
+      const m = POST_WRITE.exec(req.path);
+      const create = req.method === 'POST' && m && (!m[2] || m[3]);
+      const edit = (req.method === 'PUT' || req.method === 'DELETE') && m && m[2] && !m[3];
+      try {
+        if (create) draftCheck = { before: null, method: req.method };
+        else if (edit) draftCheck = { before: (await R('server/data/db').knex('posts').where({ id: m[2] }).first('status'))?.status ?? 'missing', method: req.method };
+      } catch {
+        draftCheck = null; // cannot tell: treat as a change
+      }
     }
     next();
   });
@@ -83,6 +111,11 @@ export async function createAdminHandler(opts = {}) {
   const handler = toHandler(outer, {
     after: async (response) => {
       await jobs.settled();
+      if (draftCheck && response.statusCode < 400 && (draftCheck.before === null || draftCheck.before === 'draft')) {
+        const after = statusAfter(response, draftCheck.method);
+        if (after === 'draft' || (after === 'deleted' && draftCheck.before === 'draft')) siteChanged = false;
+      }
+      draftCheck = null;
       changed = siteChanged && response.statusCode < 400;
       siteChanged = false;
     },

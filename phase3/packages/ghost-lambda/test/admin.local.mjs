@@ -75,6 +75,34 @@ ok(r.status === 200 && r.json.posts[0].status === 'published', 'publish');
 r = await call('DELETE', `/posts/${post.id}/`);
 ok(r.status === 204, 'delete post');
 
+// Draft saves do not ask for a regeneration (the editor autosaves a draft every few seconds); anything that
+// touches the public site does.
+{
+  const count = () => sent.length;
+  let before = count();
+  r = await call('POST', '/posts/', { posts: [{ title: 'Draft only test', status: 'draft' }] });
+  const d = r.json.posts[0];
+  ok(count() === before, 'creating a draft requests no regeneration');
+  r = await call('PUT', `/posts/${d.id}/`, { posts: [{ title: 'Draft only test, saved', updated_at: d.updated_at }] });
+  ok(r.status === 200 && count() === before, 'saving a draft requests no regeneration');
+  r = await call('PUT', `/posts/${d.id}/`, { posts: [{ status: 'published', updated_at: r.json.posts[0].updated_at }] });
+  ok(r.status === 200 && count() === before + 1, 'publishing requests a regeneration');
+  before = count();
+  r = await call('PUT', `/posts/${d.id}/`, { posts: [{ title: 'Published, edited', updated_at: r.json.posts[0].updated_at }] });
+  ok(r.status === 200 && count() === before + 1, 'editing a published post requests a regeneration');
+  before = count();
+  r = await call('PUT', `/posts/${d.id}/`, { posts: [{ status: 'draft', updated_at: r.json.posts[0].updated_at }] });
+  ok(r.status === 200 && count() === before + 1, 'unpublishing requests a regeneration');
+  before = count();
+  r = await call('DELETE', `/posts/${d.id}/`);
+  ok(r.status === 204 && count() === before, 'deleting a draft requests no regeneration');
+  r = await call('POST', '/posts/', { posts: [{ title: 'Published at creation', status: 'published' }] });
+  ok(r.status === 201 && count() === before + 1, 'creating a published post requests a regeneration');
+  before = count();
+  r = await call('DELETE', `/posts/${r.json.posts[0].id}/`);
+  ok(r.status === 204 && count() === before + 1, 'deleting a published post requests a regeneration');
+}
+
 // Multipart upload helper: the files and fields Ghost's upload endpoints take.
 function multipart(fields, file) {
   const boundary = '----phase3test';
