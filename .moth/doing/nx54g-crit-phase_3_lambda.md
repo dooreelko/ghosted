@@ -604,3 +604,28 @@ overrides at the CDN.**
   route would have been about 300 functions and routes, over the default
   routes-per-API quota, with the same Ghost boot and store restore paid in
   each, so it stays rejected.
+
+
+- Cost spike and the draft-save rule: one day after the cutover the bill showed
+  about $0.59 against about $0.045 normally. Cause: the editor autosaves a
+  draft every few seconds, each save queued a site regeneration, and each
+  regeneration re-reads about 230 objects (about 390 runs that day). Decided:
+  a save that leaves a post or page a draft (create, edit, delete of a draft)
+  does not request a regeneration; publishing, editing a published item,
+  unpublishing and deleting a published item still do. Any doubt about the
+  before/after state falls back to regenerating, so the site can lag but not
+  go stale. Rejected: debouncing the queue (still renders drafts) and
+  rate-limiting the generator (hides the cost, delays real publishes).
+- All sixteen functions run one shared package, so a code change is deployed
+  to every function to keep them identical. Per-function packages would cut
+  deploy scope but the Ghost-backed ones share most content; left as a future
+  item.
+- Newsletter images: the first send of a post with new images mails links to
+  resized variants that the generator creates only seconds later. Mail clients
+  and prefetching proxies fetch them at once; the misses fell to the
+  resize-on-miss function, which was throttled at its reserved concurrency of
+  2, and the edge cached the 503s briefly. Clients that fetched in that
+  window show broken images (some recipients, not all; web view fine). Decided:
+  raise that function's reserved concurrency to 10 (cost only on misses).
+  Not done: making the send wait for the regeneration to finish, which would
+  remove the race entirely but couples the send to the generator.
