@@ -41,14 +41,14 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx" {
   count = var.deploy_functions ? 1 : 0
 
   alarm_name          = "ghost-phase3-api-5xx"
-  alarm_description   = "The API returned server errors."
+  alarm_description   = "The API returned more than four server errors in five minutes."
   namespace           = "AWS/ApiGateway"
   metric_name         = "5xx"
   dimensions          = { ApiId = aws_apigatewayv2_api.site[0].id }
   statistic           = "Sum"
   period              = 300
   evaluation_periods  = 1
-  threshold           = 0
+  threshold           = 4 # isolated admin cold-start timeouts must not page
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.checkpoint_alarms.arn]
