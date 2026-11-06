@@ -71,3 +71,21 @@ Deployed through the full OpenTofu deploy (moth d4hkj). The first run ingested t
 2026-11-05 send's Mailgun events: 32 deliveries and 22 opens, so the backfill worked
 and Mailgun still held the events. The schedule fired on creation and runs every 6
 hours from there. Automation (welcome) analytics remains deferred (moth eiavu).
+
+
+## Open questions: resolved (2026-11-06)
+
+- Automation (welcome) analytics: deferred, see decision record 2.
+- Whether welcome emails are sent at all on phase 3: split out as its own issue
+  (eiavu); this issue no longer depends on it.
+
+## Known gaps, deliberately not addressed here
+
+- Ghost's fetch catches its own errors and only logs them, so a failed poll still
+  returns success from the function. Failure shows only as an error line in the
+  function's log. Surfacing it (a log-based alarm) is a possible follow-up, not part
+  of this decision.
+- Opens counted from Mailgun include mail-client proxy prefetches, so the open rate
+  is an upper bound. That is Mailgun's data, not something the poll can correct.
+- The poll runs every 6 hours, so open and delivery numbers lag by up to that long.
+  Accepted (decision above).
