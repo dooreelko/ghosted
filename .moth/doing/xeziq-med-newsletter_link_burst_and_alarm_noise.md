@@ -14,3 +14,10 @@ Out of scope: making the send wait for the site regeneration; admin cold-start t
   alarm for a few minutes from an evaluation made with the old threshold.
 - Related, same cause family: the image fallback function was raised from 2
   to 10 earlier today for the same send-time burst (see nx54g).
+
+- Left open on purpose: after the change the API still counted about four
+  server errors per five minutes for a short while with no matching edge
+  errors and only one function error; below the new threshold, so not
+  chased. If the alarm fires again, look at the API access path first.
+- Delivered on the feature branch and pushed; merging to the main line is
+  the owner's call.
