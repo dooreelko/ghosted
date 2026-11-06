@@ -432,12 +432,15 @@ or registry). Scripts mirror Phase 2's: deploy, verify (the draft roundtrip
 check is reused), and the rollback path. Layout follows Phase 2:
 `phase3/iac`, `scripts`, `packages`.
 
-Stages and flags (all off or empty until turned on; the plan on the adopted
-state stays empty with them off): `deploy_storage` (two buckets, on),
-`deploy_functions` (queue, 16 functions with roles and log groups, one HTTP API
-with 129 routes and per-route throttling, queue trigger, schedules,
-alarms), `enable_schedules` (recurring background jobs; on by default),
-and the existing container flag. The distribution change comes last.
+Stages and flags: the defaults describe the full rollout and every deploy is the whole
+thing (`scripts/deploy.sh`; no per-stage or per-function variants, no flags to pass).
+`deploy_storage` (two buckets), `deploy_functions` (queue, 17 functions with roles and
+log groups, one HTTP API with 129 routes and per-route throttling, queue trigger,
+schedules, alarms), `deploy_phase3_edge` (the distribution serves Phase 3),
+`host_admin_client`, `enable_schedules` (recurring background jobs). The flags remain
+as switches for the test edge and for teardown; `deploy_lightsail` defaults off (the
+container service is gone) and `image_tag` is a meaningless placeholder. A plan shows
+no changes unless the code or the IaC changed.
 The infrastructure code owns configuration and code: the package built by
 `build-functions.sh` is staged in the deploy bucket under a content-addressed name and
 every function runs from it, so a plan shows a change exactly when the build changed

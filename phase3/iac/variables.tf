@@ -1,24 +1,13 @@
 variable "image_tag" {
   type        = string
-  description = "Git short-SHA tag of the image to deploy (set via -var on each deploy)"
-  # Only read when deploy_lightsail = true; the prereq-only apply has no image
-  # to deploy yet, so it must not require a value there.
-  default = ""
-
-  validation {
-    # deploy_lightsail defaults true now (routine, permanent state) -- an
-    # apply that forgets -var image_tag would otherwise silently repoint the
-    # live container at "<repo>:" and force a replacement. Caught here
-    # rather than as a surprise container restart with a broken image.
-    condition     = var.deploy_lightsail == false || var.image_tag != ""
-    error_message = "image_tag is required (pass -var image_tag=<git-short-sha>) whenever deploy_lightsail = true."
-  }
+  description = "Meaningless since the container service is gone (deploy_lightsail = false); only read when that flag is on. The default is deliberately not a real tag."
+  default     = "unused-phase3-has-no-image"
 }
 
 variable "deploy_lightsail" {
   type        = bool
   description = "Bring up the container service, its deployment, and the app-runtime IAM role. Defaults true: the Phase 1->2 migration (moth i8hlt) is complete and this is now the live, permanent state. Pass -var deploy_lightsail=false explicitly to get the prereqs-only stage (S3 data bucket, ECR repository) back."
-  default     = true
+  default     = false
 }
 
 variable "redeploy" {
@@ -73,8 +62,8 @@ variable "deploy_storage" {
 
 variable "deploy_functions" {
   type        = bool
-  description = "Phase 3 function stage: the generate queue, the Lambda functions with their roles and log groups, the API, the schedules and their alarms. Off by default; nothing here is wired to the distribution (that is a later stage)."
-  default     = false
+  description = "Phase 3 function stage: the generate queue, the Lambda functions with their roles and log groups, the API, the schedules and their alarms."
+  default     = true
 }
 
 variable "functions_zip" {
@@ -120,7 +109,7 @@ variable "node_runtime" {
 
 variable "deploy_phase3_edge" {
   type        = bool
-  default     = false
+  default     = true
   description = "The cutover flip: points the /blog behaviors of the site distribution at the Phase 3 origins (content bucket and HTTP API) and adds the edge functions, the 404 page and the bucket policy. Needs deploy_functions and deploy_storage. Applying it moves live traffic."
 
   validation {
@@ -142,7 +131,7 @@ variable "deploy_phase3_test_edge" {
 
 variable "host_admin_client" {
   type        = bool
-  default     = false
+  default     = true
   description = "The Phase 3 edge serves Ghost's built admin client from the content bucket (published by scripts/publish-admin-client.sh) instead of sending its paths to the container service. Publish the files first."
 }
 

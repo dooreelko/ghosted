@@ -55,3 +55,20 @@ which passes only the functions flag) shows unrelated destroys. The live flags m
 be passed explicitly until the defaults are made to match, which the "no planned
 changes without code changes" rule needs. Noted rather than changed: it alters what a
 bare apply does to live traffic.
+
+
+## Decision record 3 (2026-11-06)
+
+**Defaults describe the full Phase 3 rollout; every deploy is the whole deploy.**
+Resolves the follow-up above: functions, the Phase 3 edge and the hosted admin client
+default on; the container service defaults off (it is gone). A plan with no flags
+passed shows only real changes. Why: partial deploys and flag juggling were what made
+plans show unrelated destroys; one state, one command. Rejected: keeping defaults as
+a staged-rollout ladder and passing live flags per deploy.
+
+**The container image tag is meaningless now** and keeps a deliberately non-real
+default instead of a required value (its validation is dropped). The single deploy
+script replaces the stage-one script and takes no arguments.
+
+Not changed: the Phase 2 module and its scripts (separate state, still flag-driven),
+and the one-shot adoption script, which is historical.
