@@ -89,9 +89,10 @@ triggered function.
 | ID | Replaces | Trigger |
 |---|---|---|
 | B1 `scheduled-publish` | In-process post scheduler | One-shot schedule created per scheduled post |
-| B2 `email-send` | Batch email sending, email event processing | Invoked by a newsletter send; runs the image preflight first |
+| B2 `email-send` | Batch email sending | Invoked by a newsletter send; runs the image preflight first |
 | B3 `maintenance` | Recurring jobs: expired comp cleanup, token cleanup, gift cleanup | Time-based schedule |
 | B4 `sqlite-checkpoint` | Checkpoint/compaction and orphan sweep currently done in-process | Time-based schedule (see Open) |
+| B5 `email-analytics` | Email event processing: Ghost's five-minute Mailgun events poll (opens, deliveries, failures, complaints), newsletter emails only | Time-based schedule, every 6 hours, always on (moth hnq5o) |
 | (dropped) | Update check, ping services that phone home | Not run |
 
 ## Initial sizing hypotheses

@@ -200,6 +200,12 @@
       "group": "bg"
     },
     {
+      "id": "email-analytics",
+      "label": "email-analytics",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
       "id": "mailgun",
       "label": "Mailgun (newsletter delivery, credentials in the store settings)",
       "service": "traditional_server"
@@ -326,6 +332,11 @@
       "label": "rw"
     },
     {
+      "from": "email-analytics",
+      "to": "store",
+      "label": "rw"
+    },
+    {
       "from": "content-api",
       "to": "store",
       "label": "ro"
@@ -426,6 +437,11 @@
       "label": "6-hourly"
     },
     {
+      "from": "scheduler",
+      "to": "email-analytics",
+      "label": "6-hourly"
+    },
+    {
       "from": "admin-content",
       "to": "scheduler",
       "label": "create one-shot"
@@ -434,6 +450,11 @@
       "from": "email-send",
       "to": "mailgun",
       "label": "newsletter send (HTTPS API)"
+    },
+    {
+      "from": "email-analytics",
+      "to": "mailgun",
+      "label": "events poll (HTTPS API)"
     },
     {
       "from": "email-send",
@@ -596,6 +617,10 @@
     "mailgun": {
       "rightOf": "dlq",
       "sameRow": "dlq"
+    },
+    "email-analytics": {
+      "below": "email-send",
+      "sameCol": "email-send"
     }
   }
 }

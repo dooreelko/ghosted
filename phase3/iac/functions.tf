@@ -29,6 +29,7 @@ locals {
     # Background
     scheduled-publish = { memory = 1024, timeout = 60, concurrency = 1, store = "rw", content = "none", queue = true, smtp = false, invokes = ["email-send"], description = "Publishes a scheduled post when its one-shot schedule fires" }
     email-send        = { memory = 1024, timeout = 300, concurrency = 2, store = "rw", content = "ro", queue = false, smtp = true, description = "Newsletter send, with the image preflight" }
+    email-analytics   = { memory = 1024, timeout = 300, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Newsletter Mailgun events poll (opens, deliveries, failures)" }
     maintenance       = { memory = 512, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Recurring cleanup jobs" }
     sqlite-checkpoint = { memory = 256, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Checkpoint, compaction and orphan sweep" }
   }
