@@ -21,3 +21,5 @@ Out of scope: making the send wait for the site regeneration; admin cold-start t
   chased. If the alarm fires again, look at the API access path first.
 - Delivered on the feature branch and pushed; merging to the main line is
   the owner's call.
+
+- Closed by the owner. Infrastructure validation passes; the change is live.
