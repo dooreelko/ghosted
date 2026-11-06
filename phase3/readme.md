@@ -438,8 +438,10 @@ state stays empty with them off): `deploy_storage` (two buckets, on),
 with 129 routes and per-route throttling, queue trigger, schedules,
 alarms), `enable_schedules` (recurring background jobs; on by default),
 and the existing container flag. The distribution change comes last.
-The infrastructure code owns configuration; each function's code is a
-placeholder replaced by the deploy script, and changes to it are ignored.
+The infrastructure code owns configuration and code: the package built by
+`build-functions.sh` is staged in the deploy bucket under a content-addressed name and
+every function runs from it, so a plan shows a change exactly when the build changed
+(moth d4hkj). There is no per-function deploy.
 
 ## Edge: directory indexes and the 404 page
 
@@ -804,7 +806,7 @@ redirects to the original) and the generator.
   copy on the module path. The members CSV import, exports and the other upload endpoints are
   exercised by the local admin test, which also feeds the trace, so the pruned tree carries
   what they load. The import job runs inside the request. The zip is now 45.9 MB; the direct
-  upload limit is 50 MB, so the next growth needs the deploy script to go through S3.
+  upload limit is 50 MB, so the next growth needs the deploy to go through S3 (since moth d4hkj it does).
 - Scheduled publish works end to end on Lambda. Ghost's scheduling adapter is replaced by an
   EventBridge Scheduler one that turns a scheduled post into a one-shot schedule (named from
   the callback path, so rescheduling updates it and unscheduling deletes it; a failing

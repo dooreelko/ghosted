@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Stage 1 of the Phase 3 deploy: create the queue, the 16 placeholder functions
-# (roles, log groups), the HTTP API with its routes and the alarms. Changes
-# nothing that serves traffic today: the distribution is not touched, the
-# schedules stay disabled, and the functions answer 501 until real code is
-# deployed.
+# Plan and apply the Phase 3 functions stage: the queue, the functions (roles, log
+# groups, and their code from the built package), the HTTP API with its routes and
+# the alarms. OpenTofu owns the code too: build the package first
+# (phase3/scripts/build-functions.sh, NODE_MAJOR matching node_runtime), then the
+# plan shows a change exactly when the build changed.
 #
 # Needs phase3/iac/backend.hcl and the gitignored tfvars (see .local-secrets.md).
 # Usage: phase3/scripts/apply-functions.sh [image_tag]

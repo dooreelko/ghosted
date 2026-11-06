@@ -3,8 +3,9 @@
 # what it needs and its own sizing. Sizes are starting hypotheses, tuned after
 # the first deploy from measured cold starts.
 #
-# The infrastructure code owns configuration; the deploy script owns code, so
-# the package is a placeholder here and ignored afterwards.
+# The infrastructure code owns configuration and code: the package built by
+# scripts/build-functions.sh is staged in the deploy bucket and every function
+# runs from it, so a plan shows a change exactly when the build changed.
 
 locals {
   # store: "rw" full access to the SQLite store, "ro" reads the store and
@@ -37,10 +38,14 @@ locals {
   active_functions = { for name, f in local.functions : name => f if var.deploy_functions }
 }
 
-data "archive_file" "placeholder" {
-  type        = "zip"
-  source_file = "${path.module}/../packages/placeholder/index.mjs"
-  output_path = "${path.module}/.build/placeholder.zip"
+# The built package, staged under a name that follows its content: an unchanged
+# build keeps the same object, a new build adds one (old ones expire).
+resource "aws_s3_object" "functions_zip" {
+  count = var.deploy_functions ? 1 : 0
+
+  bucket = aws_s3_bucket.deploy[0].id
+  key    = "ghost-functions-arm64-${filesha256(var.functions_zip)}.zip"
+  source = var.functions_zip
 }
 
 resource "aws_cloudwatch_log_group" "function" {
@@ -255,14 +260,15 @@ resource "aws_lambda_function" "function" {
   role          = aws_iam_role.function[each.key].arn
   runtime       = var.node_runtime
   architectures = ["arm64"]
-  handler       = "index.handler"
+  handler       = "lambda/src/${each.key}.handler"
   memory_size   = each.value.memory
   timeout       = each.value.timeout
 
   reserved_concurrent_executions = each.value.concurrency
 
-  filename         = data.archive_file.placeholder.output_path
-  source_code_hash = data.archive_file.placeholder.output_base64sha256
+  s3_bucket        = aws_s3_object.functions_zip[0].bucket
+  s3_key           = aws_s3_object.functions_zip[0].key
+  source_code_hash = filebase64sha256(var.functions_zip)
 
   environment {
     variables = merge({
@@ -298,9 +304,4 @@ resource "aws_lambda_function" "function" {
   }
 
   depends_on = [aws_iam_role_policy.function, aws_cloudwatch_log_group.function]
-
-  lifecycle {
-    # The deploy script owns the code and the entry point.
-    ignore_changes = [filename, source_code_hash, handler]
-  }
 }

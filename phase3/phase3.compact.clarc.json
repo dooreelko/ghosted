@@ -76,7 +76,7 @@
     },
     {
       "id": "bg",
-      "label": "scheduled-publish, email-send, maintenance, sqlite-checkpoint",
+      "label": "scheduled-publish, email-send, email-analytics, maintenance, sqlite-checkpoint",
       "service": "lambda",
       "group": "g_bg"
     },
@@ -193,7 +193,7 @@
     {
       "from": "bg",
       "to": "mailgun",
-      "label": "newsletter send (HTTPS API)"
+      "label": "newsletter send, events poll (HTTPS API)"
     },
     {
       "from": "readers",

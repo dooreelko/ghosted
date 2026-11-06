@@ -77,6 +77,17 @@ variable "deploy_functions" {
   default     = false
 }
 
+variable "functions_zip" {
+  type        = string
+  description = "The function package built by phase3/scripts/build-functions.sh (arm64). Staged in the deploy bucket; every function runs from it. Must exist when deploy_functions is on."
+  default     = "../build/ghost-functions-arm64.zip"
+
+  validation {
+    condition     = !var.deploy_functions || fileexists(var.functions_zip)
+    error_message = "functions_zip does not exist: build it first with phase3/scripts/build-functions.sh."
+  }
+}
+
 variable "enable_schedules" {
   type        = bool
   description = "Whether the recurring background schedules (checkpoint, maintenance) are enabled. They only touch Phase 3's own store, so they can run next to Phase 2."
