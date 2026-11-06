@@ -1,6 +1,6 @@
-# Phase 3 edge stage (flag: deploy_phase3_edge, default off). Switches the /blog
-# behaviors of the live distribution from the Lightsail container to the Phase 3
-# origins: the content bucket (pages, feeds, assets, images) and the HTTP API
+# Phase 3 edge stage (flag: deploy_phase3_edge). Points the /blog behaviors of the
+# live distribution at the Phase 3 origins (the container service they used to point
+# at is gone): the content bucket (pages, feeds, assets, images) and the HTTP API
 # (every dynamic function). Applying this is the cutover flip; see
 # phase3/readme.md ("Cutover from Phase 2") for what must be true first.
 
@@ -165,13 +165,6 @@ locals {
     "14-static"      = { pattern = "blog/*", origin = "s3-phase3-content", methods = local.read_only, cache = "optimized", request = null, function = "index" }
     "15-static-base" = { pattern = "blog", origin = "s3-phase3-content", methods = local.read_only, cache = "optimized", request = null, function = "index" }
   }
-
-  # Until host_admin_client is on, the admin client is not hosted by Phase 3: while
-  # the container service exists, its paths keep going there (after the admin API
-  # route above it). On, the static behavior serves it from the content bucket.
-  phase3_behavior_set = merge(local.phase3_behaviors, var.deploy_lightsail && !var.host_admin_client ? {
-    "095-admin-ui" = { pattern = "blog/ghost/*", origin = "lightsail-ghost-phase2", methods = local.all_methods, cache = "disabled", request = "viewer", function = null }
-  } : {})
 }
 
 # A separate distribution, reachable only by its own *.cloudfront.net address,

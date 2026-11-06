@@ -72,3 +72,20 @@ script replaces the stage-one script and takes no arguments.
 
 Not changed: the Phase 2 module and its scripts (separate state, still flag-driven),
 and the one-shot adoption script, which is historical.
+
+
+## Decision record 4 (2026-11-06)
+
+**The container service is removed from the Phase 3 configuration** (service,
+deployment, runtime role, its three alarms, the pre-flip edge branches that pointed at
+it) together with the flags that only existed for it (container, redeploy, image tag,
+the cutover-era CloudFront switch, the hosted-admin-client switch, whose "off" state
+only existed to route to the container). Phase 2 keeps its own copy in its own state.
+
+**Phase 2's data bucket and image repository are kept but no longer managed here:**
+forgotten from Phase 3's state, never destroyed (they live on, owned by Phase 2's
+state). Rejected: leaving them managed here (two states owning one resource) and
+deleting them (Phase 2 still uses both).
+
+The one-shot state-adoption script is removed (its job is done and it depended on the
+removed flags). Kept: the cutover flag for the edge.

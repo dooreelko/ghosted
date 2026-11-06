@@ -326,7 +326,7 @@ nothing scheduled), so no final re-sync.
 
 **Infrastructure as code.** `phase3/iac` starts as a copy of `phase2/iac` and
 becomes the source of truth. Its state starts as a copy of Phase 2's state
-(`phase3/scripts/adopt-phase2-state.sh`), so the first plan is empty (the
+(adopted once with a script, since removed), so the first plan was empty (the
 empty-plan gate Phase 2 used for the distribution); Phase 3 resources are then
 added behind flags that default off, and removing the container service at
 cutover is the existing container flag set to off. `phase2/` stays as a demo and
@@ -437,10 +437,10 @@ thing (`scripts/deploy.sh`; no per-stage or per-function variants, no flags to p
 `deploy_storage` (two buckets), `deploy_functions` (queue, 17 functions with roles and
 log groups, one HTTP API with 129 routes and per-route throttling, queue trigger,
 schedules, alarms), `deploy_phase3_edge` (the distribution serves Phase 3),
-`host_admin_client`, `enable_schedules` (recurring background jobs). The flags remain
-as switches for the test edge and for teardown; `deploy_lightsail` defaults off (the
-container service is gone) and `image_tag` is a meaningless placeholder. A plan shows
-no changes unless the code or the IaC changed.
+`enable_schedules` (recurring background jobs). The container service is gone from this
+configuration (moth d4hkj): Phase 2's data bucket and image repository are no longer
+managed here but still exist, owned by Phase 2's own state. A plan shows no changes
+unless the code or the IaC changed.
 The infrastructure code owns configuration and code: the package built by
 `build-functions.sh` is staged in the deploy bucket under a content-addressed name and
 every function runs from it, so a plan shows a change exactly when the build changed
@@ -464,9 +464,8 @@ forwarded), members, webmentions, content API, admin API, preview, email, unsubs
 static pages (bucket, index function) and the bare base path. The admin client is static files
 (the built client in the Ghost image, no templating); `scripts/publish-admin-client.sh` puts them in the
 content bucket under the admin path (hashed assets cached a year, entry page not cached, source maps left
-out; the generator never touches that prefix). Flag `host_admin_client` drops the container-service
-route from the live flip so the static behavior serves it; the test distribution never had that route and
-serves the client already. Checked there: entry page, a hashed asset, slash redirect, site API.
+out; the generator never touches that prefix). The static behavior serves it (there is no container-service route any more); the test distribution
+serves the client the same way. Checked there: entry page, a hashed asset, slash redirect, site API.
 Checked in a real browser on the test distribution (signed in as staff, dashboard and posts list load
 from the functions). What it took, for the cutover and for anyone repeating it:
 the password check library (`bcryptjs`) is loaded only at sign-in, so a trace test now signs in;

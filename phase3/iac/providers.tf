@@ -35,3 +35,11 @@ provider "aws" {
     }
   }
 }
+
+data "aws_caller_identity" "current" {}
+
+# The account's default aws/ssm KMS key (the SMTP credential is a SecureString with no
+# custom key). Looked up by alias so no key ARN lives in a tracked file.
+data "aws_kms_alias" "ssm_default" {
+  name = "alias/aws/ssm"
+}
