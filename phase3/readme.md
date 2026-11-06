@@ -89,9 +89,10 @@ triggered function.
 | ID | Replaces | Trigger |
 |---|---|---|
 | B1 `scheduled-publish` | In-process post scheduler | One-shot schedule created per scheduled post |
-| B2 `email-send` | Batch email sending, email event processing | Invoked by a newsletter send; runs the image preflight first |
+| B2 `email-send` | Batch email sending | Invoked by a newsletter send; runs the image preflight first |
 | B3 `maintenance` | Recurring jobs: expired comp cleanup, token cleanup, gift cleanup | Time-based schedule |
 | B4 `sqlite-checkpoint` | Checkpoint/compaction and orphan sweep currently done in-process | Time-based schedule (see Open) |
+| B5 `email-analytics` | Email event processing: Ghost's five-minute Mailgun events poll (opens, deliveries, failures, complaints), newsletter emails only | Time-based schedule, every 6 hours, always on (moth hnq5o) |
 | (dropped) | Update check, ping services that phone home | Not run |
 
 ## Initial sizing hypotheses
@@ -325,7 +326,7 @@ nothing scheduled), so no final re-sync.
 
 **Infrastructure as code.** `phase3/iac` starts as a copy of `phase2/iac` and
 becomes the source of truth. Its state starts as a copy of Phase 2's state
-(`phase3/scripts/adopt-phase2-state.sh`), so the first plan is empty (the
+(adopted once with a script, since removed), so the first plan was empty (the
 empty-plan gate Phase 2 used for the distribution); Phase 3 resources are then
 added behind flags that default off, and removing the container service at
 cutover is the existing container flag set to off. `phase2/` stays as a demo and
@@ -431,14 +432,19 @@ or registry). Scripts mirror Phase 2's: deploy, verify (the draft roundtrip
 check is reused), and the rollback path. Layout follows Phase 2:
 `phase3/iac`, `scripts`, `packages`.
 
-Stages and flags (all off or empty until turned on; the plan on the adopted
-state stays empty with them off): `deploy_storage` (two buckets, on),
-`deploy_functions` (queue, 16 functions with roles and log groups, one HTTP API
-with 129 routes and per-route throttling, queue trigger, schedules,
-alarms), `enable_schedules` (recurring background jobs; on by default),
-and the existing container flag. The distribution change comes last.
-The infrastructure code owns configuration; each function's code is a
-placeholder replaced by the deploy script, and changes to it are ignored.
+Stages and flags: the defaults describe the full rollout and every deploy is the whole
+thing (`scripts/deploy.sh`; no per-stage or per-function variants, no flags to pass).
+`deploy_storage` (two buckets), `deploy_functions` (queue, 17 functions with roles and
+log groups, one HTTP API with 129 routes and per-route throttling, queue trigger,
+schedules, alarms), `deploy_phase3_edge` (the distribution serves Phase 3),
+`enable_schedules` (recurring background jobs). The container service is gone from this
+configuration (moth d4hkj): Phase 2's data bucket and image repository are no longer
+managed here but still exist, owned by Phase 2's own state. A plan shows no changes
+unless the code or the IaC changed.
+The infrastructure code owns configuration and code: the package built by
+`build-functions.sh` is staged in the deploy bucket under a content-addressed name and
+every function runs from it, so a plan shows a change exactly when the build changed
+(moth d4hkj). There is no per-function deploy.
 
 ## Edge: directory indexes and the 404 page
 
@@ -458,9 +464,8 @@ forwarded), members, webmentions, content API, admin API, preview, email, unsubs
 static pages (bucket, index function) and the bare base path. The admin client is static files
 (the built client in the Ghost image, no templating); `scripts/publish-admin-client.sh` puts them in the
 content bucket under the admin path (hashed assets cached a year, entry page not cached, source maps left
-out; the generator never touches that prefix). Flag `host_admin_client` drops the container-service
-route from the live flip so the static behavior serves it; the test distribution never had that route and
-serves the client already. Checked there: entry page, a hashed asset, slash redirect, site API.
+out; the generator never touches that prefix). The static behavior serves it (there is no container-service route any more); the test distribution
+serves the client the same way. Checked there: entry page, a hashed asset, slash redirect, site API.
 Checked in a real browser on the test distribution (signed in as staff, dashboard and posts list load
 from the functions). What it took, for the cutover and for anyone repeating it:
 the password check library (`bcryptjs`) is loaded only at sign-in, so a trace test now signs in;
@@ -803,7 +808,7 @@ redirects to the original) and the generator.
   copy on the module path. The members CSV import, exports and the other upload endpoints are
   exercised by the local admin test, which also feeds the trace, so the pruned tree carries
   what they load. The import job runs inside the request. The zip is now 45.9 MB; the direct
-  upload limit is 50 MB, so the next growth needs the deploy script to go through S3.
+  upload limit is 50 MB, so the next growth needs the deploy to go through S3 (since moth d4hkj it does).
 - Scheduled publish works end to end on Lambda. Ghost's scheduling adapter is replaced by an
   EventBridge Scheduler one that turns a scheduled post into a one-shot schedule (named from
   the callback path, so rescheduling updates it and unscheduling deletes it; a failing

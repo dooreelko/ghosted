@@ -1,3 +1,7 @@
+# opentofu
+
+DON'T do partial deployments. tofu already does that. there should be no planned changes when there are no code changes.
+
 # Moth Agent Guide
 
 This guide helps LLM agents work effectively with moth, a git-based file issue tracker.
