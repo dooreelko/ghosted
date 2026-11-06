@@ -63,3 +63,11 @@ credentials come from Ghost's settings in the store, as for the send path. The f
 resumes from per-table cursors held in the store, so a skipped or failed run is caught
 up by the next one, which also covers backfilling the 2026-11-05 send as long as
 Mailgun still retains its events.
+
+
+## Outcome (2026-11-06)
+
+Deployed through the full OpenTofu deploy (moth d4hkj). The first run ingested the
+2026-11-05 send's Mailgun events: 32 deliveries and 22 opens, so the backfill worked
+and Mailgun still held the events. The schedule fired on creation and runs every 6
+hours from there. Automation (welcome) analytics remains deferred (moth eiavu).
