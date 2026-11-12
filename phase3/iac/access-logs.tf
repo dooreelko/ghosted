@@ -103,3 +103,21 @@ resource "aws_cloudwatch_query_definition" "top_pages" {
     | limit 50
   EOT
 }
+
+# Saved Logs Insights query: book short-link clicks per path per day. The
+# redirect is a 302, which top_pages (2xx/304 only) does not count. Self-declared
+# crawlers and link-preview fetchers are excluded, as in top_pages.
+resource "aws_cloudwatch_query_definition" "book_clicks" {
+  name            = "ghost-site/book-clicks"
+  log_group_names = [aws_cloudwatch_log_group.cloudfront_access.name]
+
+  query_string = <<-EOT
+    fields `cs-uri-stem` as path
+    | filter `cs-method` = "GET"
+    | filter path like /^\/book(\/|$)/
+    | filter `sc-status` = 302
+    | filter `cs(User-Agent)` not like /(?i)(bot|crawl|spider|slurp|preview|monitor)/
+    | stats count(*) as clicks by path, datefloor(@timestamp, 1d) as day
+    | sort day desc, clicks desc
+  EOT
+}
