@@ -331,6 +331,8 @@ resource "aws_lambda_function" "function" {
       } : {}, each.value.smtp ? {
       SMTP_PARAMETER_NAME = var.smtp_parameter_name
       MAIL_USER           = var.mail_user
+      } : {}, try(each.value.stats, false) ? {
+      ACCESS_LOG_GROUP = aws_cloudwatch_log_group.cloudfront_access.name
       } : {}, try(each.value.invalidates, false) ? {
       DISTRIBUTION_ID = aws_cloudfront_distribution.site.id
       INVALIDATE      = var.deploy_phase3_edge ? "1" : "0"
