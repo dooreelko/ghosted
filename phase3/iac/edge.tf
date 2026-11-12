@@ -110,6 +110,31 @@ resource "aws_cloudfront_function" "index" {
   JS
 }
 
+# The book short link: /book and everything under it (/book/qr, ...) answers an
+# immediate 302 to the Leanpub page, so each placement can have its own path and
+# its own count. Answered at the edge -- no origin is contacted -- and still
+# recorded by the access logs (edge result type FunctionGeneratedResponse). A 302,
+# not a 301, so browsers do not cache it: every scan is counted and the target can
+# change later. Independent of the Phase 3 flags: it exists whenever the
+# distribution does.
+resource "aws_cloudfront_function" "book_redirect" {
+  name    = "ghost-book-redirect"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = <<-JS
+    function handler(event) {
+      return {
+        statusCode: 302,
+        statusDescription: 'Found',
+        headers: {
+          location: { value: 'https://leanpub.com/well-architected-cloud' },
+          'cache-control': { value: 'no-store' }
+        }
+      };
+    }
+  JS
+}
+
 # A visitor without Ghost's members session cookie is anonymous, and Ghost
 # answers that with an empty 204; answer it here so no function boots for it.
 # Except a request that identifies a member by the uuid in its query (the

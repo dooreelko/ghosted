@@ -105,6 +105,28 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
+  # Book short link (see aws_cloudfront_function.book_redirect): the function
+  # answers every request itself, so the target origin is never contacted; the
+  # marketing-root origin is only the required placeholder. Both patterns are
+  # needed: "book/*" does not match the bare "/book", and "book*" would also
+  # catch unrelated paths such as /bookshelf.
+  dynamic "ordered_cache_behavior" {
+    for_each = ["book", "book/*"]
+    content {
+      path_pattern           = ordered_cache_behavior.value
+      target_origin_id       = "the-well-architected-cloud.com.s3.eu-central-1.amazonaws.com-mf4f3dx09q5"
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ["GET", "HEAD"]
+      cached_methods         = ["GET", "HEAD"]
+      cache_policy_id        = data.aws_cloudfront_cache_policy.caching_disabled.id
+
+      function_association {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.book_redirect.arn
+      }
+    }
+  }
+
   # Phase 1 marketing-root S3 origin (not part of this state). Its OAC ID
   # and its domain_name (which embeds a bucket name and region) are both
   # no-default variables for the same reason -- see variables.tf. origin_id

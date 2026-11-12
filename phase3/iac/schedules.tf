@@ -51,7 +51,7 @@ resource "aws_iam_role_policy" "scheduler" {
       Effect = "Allow"
       Action = "lambda:InvokeFunction"
       Resource = [
-        for f in ["scheduled-publish", "maintenance", "sqlite-checkpoint", "email-analytics"] :
+        for f in ["scheduled-publish", "maintenance", "sqlite-checkpoint", "email-analytics", "visit-stats"] :
         "arn:aws:lambda:us-east-1:${data.aws_caller_identity.current.account_id}:function:ghost-phase3-${f}"
       ]
     }]
@@ -64,6 +64,8 @@ locals {
       maintenance       = "rate(1 day)"
       sqlite-checkpoint = "rate(6 hours)"
       email-analytics   = "rate(6 hours)"
+      # Shortly after midnight UTC: the previous day is complete and its access logs have landed.
+      visit-stats = "cron(30 0 * * ? *)"
     } : name => expression if var.deploy_functions
   }
 }

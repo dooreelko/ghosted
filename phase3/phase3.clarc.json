@@ -206,9 +206,20 @@
       "group": "bg"
     },
     {
+      "id": "visit-stats",
+      "label": "visit-stats",
+      "service": "lambda",
+      "group": "bg"
+    },
+    {
       "id": "mailgun",
       "label": "Mailgun (newsletter delivery, credentials in the store settings)",
       "service": "traditional_server"
+    },
+    {
+      "id": "access-logs",
+      "label": "CloudFront access logs (90 days)",
+      "service": "cloudwatch_2"
     }
   ],
   "edges": [
@@ -442,6 +453,11 @@
       "label": "6-hourly"
     },
     {
+      "from": "scheduler",
+      "to": "visit-stats",
+      "label": "daily"
+    },
+    {
       "from": "admin-content",
       "to": "scheduler",
       "label": "create one-shot"
@@ -498,6 +514,22 @@
       "from": "scheduled-publish",
       "to": "email-send",
       "label": "send"
+    },
+    {
+      "from": "cdn",
+      "to": "access-logs",
+      "label": "standard logs",
+      "kind": "nf"
+    },
+    {
+      "from": "visit-stats",
+      "to": "access-logs",
+      "label": "Logs Insights query"
+    },
+    {
+      "from": "visit-stats",
+      "to": "store",
+      "label": "daily report (stats/)"
     }
   ],
   "joinPorts": "all",
@@ -621,6 +653,14 @@
     "email-analytics": {
       "below": "email-send",
       "sameCol": "email-send"
+    },
+    "visit-stats": {
+      "below": "email-analytics",
+      "sameCol": "email-analytics"
+    },
+    "access-logs": {
+      "rightOf": "visit-stats",
+      "sameRow": "visit-stats"
     }
   }
 }

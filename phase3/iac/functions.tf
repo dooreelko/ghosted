@@ -31,6 +31,7 @@ locals {
     scheduled-publish = { memory = 1024, timeout = 60, concurrency = 1, store = "rw", content = "none", queue = true, smtp = false, invokes = ["email-send"], description = "Publishes a scheduled post when its one-shot schedule fires" }
     email-send        = { memory = 1024, timeout = 300, concurrency = 2, store = "rw", content = "ro", queue = false, smtp = true, description = "Newsletter send, with the image preflight" }
     email-analytics   = { memory = 1024, timeout = 300, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Newsletter Mailgun events poll (opens, deliveries, failures)" }
+    visit-stats       = { memory = 256, timeout = 300, concurrency = 1, store = "none", content = "none", queue = false, smtp = false, stats = true, description = "Daily visit statistics for the previous day, from the access logs" }
     maintenance       = { memory = 512, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Recurring cleanup jobs" }
     sqlite-checkpoint = { memory = 256, timeout = 120, concurrency = 1, store = "rw", content = "none", queue = false, smtp = false, description = "Checkpoint, compaction and orphan sweep" }
   }
@@ -132,6 +133,39 @@ data "aws_iam_policy_document" "function" {
       effect    = "Allow"
       actions   = ["s3:GetObject", "s3:ListBucket"]
       resources = [aws_s3_bucket.content[0].arn, "${aws_s3_bucket.content[0].arn}/*"]
+    }
+  }
+
+  # Daily visit statistics: query the access log group and write one report per
+  # day under stats/ in the store bucket (the store's own sweeps only touch
+  # segments/). GetQueryResults has no resource-level scoping.
+  dynamic "statement" {
+    for_each = try(each.value.stats, false) ? [1] : []
+    content {
+      sid       = "StatsQueryStart"
+      effect    = "Allow"
+      actions   = ["logs:StartQuery"]
+      resources = [aws_cloudwatch_log_group.cloudfront_access.arn, "${aws_cloudwatch_log_group.cloudfront_access.arn}:*"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = try(each.value.stats, false) ? [1] : []
+    content {
+      sid       = "StatsQueryResults"
+      effect    = "Allow"
+      actions   = ["logs:GetQueryResults"]
+      resources = ["*"]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = try(each.value.stats, false) ? [1] : []
+    content {
+      sid       = "StatsWrite"
+      effect    = "Allow"
+      actions   = ["s3:PutObject"]
+      resources = ["${aws_s3_bucket.store[0].arn}/stats/*"]
     }
   }
 
@@ -297,6 +331,8 @@ resource "aws_lambda_function" "function" {
       } : {}, each.value.smtp ? {
       SMTP_PARAMETER_NAME = var.smtp_parameter_name
       MAIL_USER           = var.mail_user
+      } : {}, try(each.value.stats, false) ? {
+      ACCESS_LOG_GROUP = aws_cloudwatch_log_group.cloudfront_access.name
       } : {}, try(each.value.invalidates, false) ? {
       DISTRIBUTION_ID = aws_cloudfront_distribution.site.id
       INVALIDATE      = var.deploy_phase3_edge ? "1" : "0"
