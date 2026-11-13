@@ -16,21 +16,16 @@ test('dayOf rejects a bad date', () => {
   assert.equal(dayOf('2026-01-02').date, '2026-01-02');
 });
 
-test('buildReport names root, blog home and the qr, and ranks blog pages', () => {
-  const pages = rowsToCounts([
-    row('/', 'views', 10), row('/index.html', 'views', 2),
-    row('/blog/', 'views', 7), row('/blog', 'views', 1),
-    row('/blog/a/', 'views', 5), row('/blog/b/', 'views', 9),
-    row('/about/', 'views', 4),
-  ], 'views');
-  const book = rowsToCounts([row('/book/qr', 'clicks', 3), row('/book/mail', 'clicks', 1)], 'clicks');
-  const r = buildReport({ date: '2026-11-12' }, pages, book);
-  assert.equal(r.root, 12);
-  assert.equal(r.blogHome, 8);
-  assert.equal(r.blogPages.total, 22);
-  assert.deepEqual(r.blogPages.top.map((p) => p.path), ['/blog/b/', '/blog/', '/blog/a/', '/blog']);
-  assert.equal(r.bookQr, 3);
-  assert.deepEqual(r.bookOther, { '/book/mail': 1 });
+test('buildReport is one path/views entry per path, book clicks included, most viewed first', () => {
+  const pages = rowsToCounts([row('/', 'views', 10), row('/blog/', 'views', 7), row('/blog/rss/', 'views', 13), row('/blog/a/', 'views', 7)], 'views');
+  const book = rowsToCounts([row('/book/qr-202611', 'clicks', 3)], 'clicks');
+  assert.deepEqual(buildReport(pages, book), [
+    { path: '/blog/rss/', views: 13 },
+    { path: '/', views: 10 },
+    { path: '/blog/', views: 7 },
+    { path: '/blog/a/', views: 7 },
+    { path: '/book/qr-202611', views: 3 },
+  ]);
 });
 
 test('handler queries the previous day and writes stats/visits/<date>.json', async () => {
@@ -52,8 +47,7 @@ test('handler queries the previous day and writes stats/visits/<date>.json', asy
   assert.equal(sent[0].startTime, Date.UTC(2026, 10, 12) / 1000);
   assert.equal(puts[0].Bucket, 'b');
   const body = JSON.parse(puts[0].Body);
-  assert.equal(body.root, 5);
-  assert.equal(body.bookQr, 2);
+  assert.deepEqual(body, [{ path: '/', views: 5 }, { path: '/book/qr', views: 2 }]);
 });
 
 test('a failed query fails the run and writes nothing', async () => {
@@ -61,5 +55,14 @@ test('a failed query fails the run and writes nothing', async () => {
   const puts = [];
   const handler = createVisitStatsHandler({ logGroup: 'lg', bucket: 'b', logs, s3: { async send(c) { puts.push(c); } }, sleep: async () => {} });
   await assert.rejects(handler({ date: '2026-11-12' }), /Failed/);
+  assert.equal(puts.length, 0);
+});
+
+test('a result at the row ceiling fails the run instead of writing a truncated report', async () => {
+  const rows = Array.from({ length: 10000 }, (_, i) => row(`/p${i}`, 'views', 1));
+  const logs = { async send(cmd) { return cmd.constructor.name === 'StartQueryCommand' ? { queryId: 'q' } : { status: 'Complete', results: rows }; } };
+  const puts = [];
+  const handler = createVisitStatsHandler({ logGroup: 'lg', bucket: 'b', logs, s3: { async send(c) { puts.push(c); } }, sleep: async () => {} });
+  await assert.rejects(handler({ date: '2026-11-12' }), /ceiling/);
   assert.equal(puts.length, 0);
 });
