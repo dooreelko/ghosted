@@ -10,7 +10,8 @@
 #   --all      every report, views summed per path
 #   --histogram  with --month, --year or --all: instead of the per-path table, the total
 #              views per day, one line each (day, count, a proportional bar); the whole
-#              line takes 80% of the terminal width (80 columns if it can't be detected)
+#              line takes WIDTH_PCT percent of the terminal width (FALLBACK_COLS columns
+#              if it can't be detected); see the settings below
 #
 # Only public HTML pages and the /book redirects are of interest: the job already
 # drops assets, crawlers and the admin/members API, and this script also leaves out
@@ -19,6 +20,12 @@
 # Needs duckdb and AWS credentials for the profile (AWS_PROFILE, default "default").
 # The bucket is found by name prefix; set STATS_BUCKET to name it explicitly.
 set -euo pipefail
+
+# Histogram layout; override from the environment, e.g. STATS_WIDTH_PCT=70 scripts/stats.sh ...
+WIDTH_PCT="${STATS_WIDTH_PCT:-90}"          # share of the terminal width the whole line takes
+FALLBACK_COLS="${STATS_FALLBACK_COLS:-80}"  # assumed terminal width when it can't be detected
+[[ "$WIDTH_PCT" =~ ^[0-9]+$ && "$WIDTH_PCT" -ge 1 && "$WIDTH_PCT" -le 100 ]] || { echo "stats.sh: STATS_WIDTH_PCT must be 1-100" >&2; exit 2; }
+[[ "$FALLBACK_COLS" =~ ^[0-9]+$ ]] || { echo "stats.sh: STATS_FALLBACK_COLS must be a number" >&2; exit 2; }
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
@@ -49,16 +56,16 @@ read_reports="read_json('s3://${bucket}/stats/visits/${pattern}.json', columns =
 keep="path NOT LIKE '%.md' AND path NOT LIKE '%/rss/'"
 
 if [ "$histogram" -eq 1 ]; then
-  # One plain-text line per day. The whole line (day, count, bar) is 80% of the terminal
+  # One plain-text line per day. The whole line (day, count, bar) is WIDTH_PCT percent of the terminal
   # width; the busiest day's bar fills what the day and the count leave over.
-  cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
-  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+  cols="${COLUMNS:-$(tput cols 2>/dev/null || echo "$FALLBACK_COLS")}"
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols="$FALLBACK_COLS"
   query="
 WITH d AS (
   SELECT regexp_extract(filename, '(\\d{4}-\\d{2}-\\d{2})\\.json\$', 1) AS day, sum(views)::BIGINT AS views
   FROM ${read_reports} WHERE ${keep} GROUP BY day
 )
-SELECT day || '  ' || lpad(views::VARCHAR, length((SELECT max(views) FROM d)::VARCHAR)::INTEGER, ' ') || '  ' || repeat('█', greatest(1, round(views * greatest(10, (${cols} * 8 / 10) - 14 - length((SELECT max(views) FROM d)::VARCHAR)) * 1.0 / (SELECT max(views) FROM d))::INTEGER))
+SELECT day || '  ' || lpad(views::VARCHAR, length((SELECT max(views) FROM d)::VARCHAR)::INTEGER, ' ') || '  ' || repeat('█', greatest(1, round(views * greatest(10, (${cols} * ${WIDTH_PCT} / 100) - 14 - length((SELECT max(views) FROM d)::VARCHAR)) * 1.0 / (SELECT max(views) FROM d))::INTEGER))
 FROM d ORDER BY day;"
   format=(-cmd ".mode list" -cmd ".headers off")
 else
