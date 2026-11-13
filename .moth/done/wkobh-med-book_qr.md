@@ -93,3 +93,102 @@ Closed by the human with the feed/`.md` counting question left as a known gap
 the daily stats job and the access-log group it reads. The diagram's layout step
 is very slow (tens of minutes of compute) with the current tool; render it in the
 background.
+
+
+## Decision record 4 (2026-11-13): reopened, daily report is a plain array
+
+Reopened to simplify the daily report format.
+
+**The report is just an array of path/views**, one entry per counted path, for the
+whole day; no named fields (root, blog root, qr, totals), no top-N cut. Page
+views and book clicks share the one array (their paths never overlap: book paths
+are 302s, pages are 2xx/304). The date lives in the file name only. Any grouping
+(home pages, blog total, per-placement book clicks, excluding the feed) is
+analytics done later at query time, not by the job.
+Why: the named fields were analytics baked into the job; they lost the long tail
+and made the shape depend on today's questions. Supersedes the "report content"
+and "top N blog pages" decisions above.
+
+**The noise filters stay** (assets, Ghost admin/members API, self-declared
+crawlers, same as top-pages): junk nobody wants, and keeping it keeps the files
+small. Rejected: fully raw output (much bigger, mostly junk). Open until the
+human confirms.
+
+**Existing reports are regenerated** in the new format for every day the logs
+hold (same file names, overwritten).
+
+This resolves the "feed and `.md` counted as pages" gap for the reports: those
+paths are now rows that analysis can exclude. The saved top-pages query is
+unchanged.
+
+
+**Outcome (2026-11-13).** Applied. Every report from the first day the logs hold
+through the current day was regenerated in the array format (the previous format
+is gone from the bucket); all files verified to be arrays. The job refuses to
+write a report when the log query hits its row ceiling, so a truncated day cannot
+be mistaken for a whole one.
+
+
+## Decision record 5 (2026-11-13): reading the reports
+
+**Filter confirmed by the human.** Only public HTML pages and the `/book` redirects
+matter; assets, crawlers and the admin/members API are of no interest, so the job
+keeps dropping them. (Closes the "open until confirmed" point in record 4.)
+
+**A small script queries the reports with DuckDB**, run from a shell: the previous
+day by default, or a named day, a month, a year, or everything; multi-day modes
+sum views per path. Month and year default to the current one so far.
+It also leaves out the RSS feed and the `.md` copies of posts at query time (the
+reports keep them as rows; only the view hides them), which settles the
+"feed and `.md` counted as pages" gap for anyone reading through the script.
+The script is self-contained (does not depend on the user's DuckDB rc file) and
+finds the store bucket by its name prefix, or from an environment variable, so no
+bucket name sits in a tracked file.
+Rejected: an Athena/Glue table (more infrastructure than a handful of small JSON
+files warrants); computing the aggregates in the job (back to baked-in analytics).
+
+
+**Optional histogram view of the same script** for the multi-day modes: one line
+per day (day, total views, a bar scaled so the busiest day is 100 characters wide).
+Same filters as the table; not offered for a single day (nothing to compare).
+Days are listed top to bottom, so the chart scrolls vertically.
+
+
+**Histogram width follows the terminal** (supersedes the fixed 100-character bar
+above): the whole line takes 80% of the detected terminal width, the busiest day's
+bar filling what the day and count leave. Falls back to 80 columns when the width
+cannot be detected; an environment override exists for non-interactive use.
+
+
+**Histogram width is a setting, not a constant** (supersedes the 80% above): the
+share of the terminal the line takes defaults to 90%, and the width assumed when
+the terminal cannot be detected defaults to 80 columns (so an undetected line
+still fits a classic terminal). Both can be overridden from the environment.
+
+
+## Status (2026-11-13): current state, superseding earlier notes
+
+- **The issue is open again** (reopened by the human); the "Closed" note above
+  describes the first close and no longer applies.
+- **QR codes verified by the human with a phone**: both variants (square and
+  rounded modules) scan correctly and land on the Leanpub page.
+- **The "feed and `.md` counted as pages" gap is closed.** The reports now keep
+  every counted path as its own row and the reading script hides those two kinds
+  at query time; the saved top-pages query is unchanged and still counts them.
+  The "report content" and "top N" decisions in record 3 are superseded by the
+  plain array in record 4.
+- **Per-placement paths:** each placement gets its own `/book/<name>` path and
+  QR; the reports list every such path as an ordinary row, nothing needs
+  registering. A mistyped path still redirects (and is counted under its own
+  name) because the redirect does not validate paths.
+- **Still open:** which QR variant is the one to use is not decided; the daily
+  reports are kept indefinitely (no expiry rule), which is fine at their size
+  but unstated until now; the access log's recorded path for the root and blog
+  root was inferred (data looks right).
+
+
+## Closed (2026-11-13, second close)
+Closed by the human. Final state: the `/book` redirect and both QR variants, the
+daily stats job writing plain path/views arrays, the DuckDB reading script with its
+histogram view, all deployed and verified. Leftovers (QR variant choice, report
+expiry) are the "Still open" items in the status section above and are not blocking.
