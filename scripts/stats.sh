@@ -9,7 +9,8 @@
 #   --year     one year, views summed per path (default: the current year so far)
 #   --all      every report, views summed per path
 #   --histogram  with --month, --year or --all: instead of the per-path table, the total
-#              views per day, one line each (day, count, a bar scaled to at most 100 chars)
+#              views per day, one line each (day, count, a proportional bar); the whole
+#              line takes 80% of the terminal width (80 columns if it can't be detected)
 #
 # Only public HTML pages and the /book redirects are of interest: the job already
 # drops assets, crawlers and the admin/members API, and this script also leaves out
@@ -48,13 +49,16 @@ read_reports="read_json('s3://${bucket}/stats/visits/${pattern}.json', columns =
 keep="path NOT LIKE '%.md' AND path NOT LIKE '%/rss/'"
 
 if [ "$histogram" -eq 1 ]; then
-  # One plain-text line per day: the bar is proportional to the busiest day (100 chars).
+  # One plain-text line per day. The whole line (day, count, bar) is 80% of the terminal
+  # width; the busiest day's bar fills what the day and the count leave over.
+  cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
+  [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
   query="
 WITH d AS (
   SELECT regexp_extract(filename, '(\\d{4}-\\d{2}-\\d{2})\\.json\$', 1) AS day, sum(views)::BIGINT AS views
   FROM ${read_reports} WHERE ${keep} GROUP BY day
 )
-SELECT day || '  ' || lpad(views::VARCHAR, length((SELECT max(views) FROM d)::VARCHAR)::INTEGER, ' ') || '  ' || repeat('█', greatest(1, round(views * 100.0 / (SELECT max(views) FROM d))::INTEGER))
+SELECT day || '  ' || lpad(views::VARCHAR, length((SELECT max(views) FROM d)::VARCHAR)::INTEGER, ' ') || '  ' || repeat('█', greatest(1, round(views * greatest(10, (${cols} * 8 / 10) - 14 - length((SELECT max(views) FROM d)::VARCHAR)) * 1.0 / (SELECT max(views) FROM d))::INTEGER))
 FROM d ORDER BY day;"
   format=(-cmd ".mode list" -cmd ".headers off")
 else
