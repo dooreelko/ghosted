@@ -2,14 +2,15 @@ import { CloudWatchLogsClient, StartQueryCommand, GetQueryResultsCommand } from 
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
 // Daily visit statistics for the previous UTC day, read from the CloudFront access logs with
-// Logs Insights and written as one JSON file per day under stats/ in the store bucket (the
+// Logs Insights and written as one JSON file per day under stats/ in the store bucket: a plain
+// array of { path, views }, page views and book clicks together (their paths never overlap).
+// Grouping and totals are analysis, done later at query time. (The
 // sqlite store's own sweeps only touch segments/, so the prefix is safe). The access logs
 // expire after 90 days; these files are the long-term record.
 //
 // What counts follows the saved "top pages" query in access-logs.tf: successful GETs of
 // non-asset paths, no Ghost admin/members API, no self-declared crawlers. Keep the two in step.
 
-export const TOP_BLOG_PAGES = 50;
 const MAX_ROWS = 10000; // the Logs Insights result ceiling
 
 const PAGE_VIEWS_QUERY = `
@@ -33,10 +34,6 @@ const BOOK_CLICKS_QUERY = `
   | stats count(*) as clicks by path
   | sort clicks desc
   | limit ${MAX_ROWS}`;
-
-const ROOT_PATHS = new Set(['/', '/index.html']);
-const BLOG_HOME_PATHS = new Set(['/blog', '/blog/', '/blog/index.html']);
-const QR_PATH = '/book/qr';
 
 // The previous UTC day relative to `now`: { date: 'YYYY-MM-DD', start, end } in epoch seconds.
 export function previousDay(now) {
@@ -63,29 +60,25 @@ export function rowsToCounts(rows, countField) {
   return counts;
 }
 
-const sum = (counts, paths) => [...paths].reduce((t, p) => t + (counts.get(p) ?? 0), 0);
-
-export function buildReport(day, pageCounts, bookCounts) {
-  const blog = [...pageCounts].filter(([p]) => p.startsWith('/blog/') || p === '/blog');
-  const top = blog.sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, TOP_BLOG_PAGES);
-  return {
-    date: day.date,
-    root: sum(pageCounts, ROOT_PATHS),
-    blogHome: sum(pageCounts, BLOG_HOME_PATHS),
-    blogPages: {
-      total: blog.reduce((t, [, n]) => t + n, 0),
-      top: top.map(([path, views]) => ({ path, views })),
-    },
-    bookQr: bookCounts.get(QR_PATH) ?? 0,
-    bookOther: Object.fromEntries([...bookCounts].filter(([p]) => p !== QR_PATH)),
-  };
+// One { path, views } per path, most viewed first (ties by path, so a re-run is byte-identical).
+export function buildReport(pageCounts, bookCounts) {
+  const all = new Map(pageCounts);
+  for (const [path, n] of bookCounts) all.set(path, (all.get(path) ?? 0) + n);
+  return [...all]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .map(([path, views]) => ({ path, views }));
 }
 
 async function runQuery(logs, { logGroup, query, day, pollMs, sleep }) {
   const { queryId } = await logs.send(new StartQueryCommand({ logGroupName: logGroup, queryString: query, startTime: day.start, endTime: day.end - 1, limit: MAX_ROWS }));
   for (;;) {
     const res = await logs.send(new GetQueryResultsCommand({ queryId }));
-    if (res.status === 'Complete') return res.results ?? [];
+    if (res.status === 'Complete') {
+      const rows = res.results ?? [];
+      // A full result may be cut off; a truncated report must not be written as if it were whole.
+      if (rows.length >= MAX_ROWS) throw new Error(`Logs Insights returned ${MAX_ROWS} rows, the ceiling: result may be truncated`);
+      return rows;
+    }
     if (['Failed', 'Cancelled', 'Timeout'].includes(res.status)) throw new Error(`Logs Insights query ${res.status}`);
     await sleep(pollMs);
   }
@@ -108,10 +101,10 @@ export function createVisitStatsHandler(opts = {}) {
       runQuery(logs, { logGroup, query: PAGE_VIEWS_QUERY, day, pollMs, sleep }),
       runQuery(logs, { logGroup, query: BOOK_CLICKS_QUERY, day, pollMs, sleep }),
     ]);
-    const report = buildReport(day, rowsToCounts(pageRows, 'views'), rowsToCounts(bookRows, 'clicks'));
+    const report = buildReport(rowsToCounts(pageRows, 'views'), rowsToCounts(bookRows, 'clicks'));
     const key = `stats/visits/${day.date}.json`;
-    await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: JSON.stringify(report, null, 2), ContentType: 'application/json' }));
-    console.log(JSON.stringify({ visitStats: { key, root: report.root, blogHome: report.blogHome, blogTotal: report.blogPages.total, bookQr: report.bookQr } }));
+    await s3.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: JSON.stringify(report), ContentType: 'application/json' }));
+    console.log(JSON.stringify({ visitStats: { key, paths: report.length, views: report.reduce((t, r) => t + r.views, 0) } }));
     return { key };
   };
 }
